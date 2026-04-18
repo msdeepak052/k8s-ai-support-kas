@@ -132,15 +132,15 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
         return {**state, "steps_taken": state.get("steps_taken", []) + ["fetch_resources(skipped)"]}
 
     kubectl = _get_kubectl()
-    namespace = state.get("namespace", "default")
-    resource_name = state.get("resource_name")
-    resource_type = state.get("resource_type", "pod").lower()
+    namespace = state.get("namespace") or "default"
+    resource_name = state.get("resource_name") or None
+    resource_type = (state.get("resource_type") or "pod").lower()
 
     errors = list(state.get("errors", []))
     warnings = list(state.get("warnings", []))
 
     # Determine what to fetch based on resource type and query
-    query = state.get("query", "").lower()
+    query = (state.get("query") or "").lower()
 
     # --- Always fetch events ---
     fetch_tasks = {
