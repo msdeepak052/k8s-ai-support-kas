@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kas-test
+  labels:
+    purpose: kas-testing
+    managed-by: k8s-ai-support

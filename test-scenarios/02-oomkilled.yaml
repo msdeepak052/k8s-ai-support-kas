@@ -1,0 +1,38 @@
+# ============================================================
+# SCENARIO 2: OOMKilled (Out of Memory)
+# Memory limit is set to 30Mi but the container tries to
+# allocate 100MB. The Linux OOM killer terminates it with
+# exit code 137. Shows up as OOMKilled in lastState.
+#
+# Test with:
+#   kas "oom-pod keeps restarting" -n kas-test
+#   kas "why is oom-pod killed?" -n kas-test -r oom-pod -t pod
+# ============================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-pod
+  namespace: kas-test
+  labels:
+    scenario: oomkilled
+    app: oom-test
+spec:
+  containers:
+    - name: memory-hog
+      image: polinux/stress:latest
+      command:
+        - stress
+        - --vm
+        - "1"
+        - --vm-bytes
+        - "100M"   # tries to allocate 100MB
+        - --vm-hang
+        - "0"
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "10Mi"
+        limits:
+          cpu: "100m"
+          memory: "30Mi"   # only 30MB allowed — triggers OOM
+  restartPolicy: Always

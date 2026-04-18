@@ -1,0 +1,77 @@
+# ============================================================
+# SCENARIO 5: Deployment rollout stuck / pods all failing
+# A Deployment where every pod fails on startup.
+# Kubernetes keeps creating new pods but they all crash.
+# Shows: READY 0/3, rollout stuck, events accumulating.
+#
+# Test with:
+#   kas "failing-deployment not ready" -n kas-test
+#   kas "why is failing-deployment rollout stuck?" -n kas-test -r failing-deployment -t deployment
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failing-deployment
+  namespace: kas-test
+  labels:
+    scenario: deployment-failing
+    app: failing-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: failing-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: failing-app
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting backend service..."
+              echo "Connecting to database at db.internal:5432"
+              sleep 3
+              echo "ERROR: Connection refused — database not reachable"
+              echo "FATAL: Cannot start without database connection"
+              exit 2
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          env:
+            - name: DB_HOST
+              value: "db.internal"
+            - name: DB_PORT
+              value: "5432"
+            - name: APP_ENV
+              value: "production"
+
+---
+# Service for the failing deployment — endpoints will be empty
+apiVersion: v1
+kind: Service
+metadata:
+  name: failing-deployment-svc
+  namespace: kas-test
+  labels:
+    scenario: deployment-failing
+spec:
+  selector:
+    app: failing-app
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP

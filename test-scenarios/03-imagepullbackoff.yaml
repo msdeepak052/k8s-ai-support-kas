@@ -1,0 +1,51 @@
+# ============================================================
+# SCENARIO 3: ImagePullBackOff
+# Two pods — one with a completely wrong image name, one with
+# a valid image but wrong/nonexistent tag. Both result in
+# ImagePullBackOff but for slightly different reasons.
+#
+# Test with:
+#   kas "imagepull-wrong-name failing to start" -n kas-test
+#   kas "why cant kubernetes pull the image?" -n kas-test
+# ============================================================
+
+# Pod 1: Image name does not exist at all
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imagepull-wrong-name
+  namespace: kas-test
+  labels:
+    scenario: imagepullbackoff
+    reason: wrong-image-name
+    app: imagepull-test
+spec:
+  containers:
+    - name: app
+      image: this-registry-does-not-exist.io/my-app:v1.0.0
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+  restartPolicy: Always
+
+---
+# Pod 2: Valid image (nginx) but tag v99.99.99 does not exist
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imagepull-wrong-tag
+  namespace: kas-test
+  labels:
+    scenario: imagepullbackoff
+    reason: wrong-tag
+    app: imagepull-test
+spec:
+  containers:
+    - name: app
+      image: nginx:v99.99.99-does-not-exist
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+  restartPolicy: Always

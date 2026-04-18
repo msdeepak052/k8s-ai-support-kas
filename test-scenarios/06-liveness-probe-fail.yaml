@@ -1,0 +1,65 @@
+# ============================================================
+# SCENARIO 6: Liveness Probe Failing
+# Pod runs fine but liveness probe hits /healthz which always
+# returns HTTP 500. Kubernetes kills and restarts the pod
+# repeatedly. Shows restart count climbing, pod never becomes
+# stable despite the container technically running.
+#
+# Test with:
+#   kas "liveness-probe-pod keeps restarting" -n kas-test
+#   kas "why is liveness-probe-pod being killed?" -n kas-test -r liveness-probe-pod -t pod
+# ============================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: liveness-probe-pod
+  namespace: kas-test
+  labels:
+    scenario: liveness-probe-fail
+    app: liveness-test
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # Start a minimal HTTP server that always returns 500 on /healthz
+          # and 200 on / — the probe hits /healthz so it always fails
+          while true; do
+            {
+              read request
+              path=$(echo "$request" | awk '{print $2}')
+              if [ "$path" = "/healthz" ]; then
+                printf "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 22\r\n\r\nhealth check failed\n"
+              else
+                printf "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nok\n"
+              fi
+            } | nc -l -p 8080 -q 1
+          done
+      ports:
+        - containerPort: 8080
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 2      # kill after 2 consecutive failures (fast for demo)
+        timeoutSeconds: 2
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        initialDelaySeconds: 3
+        periodSeconds: 5
+        failureThreshold: 1
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "100m"
+          memory: "32Mi"
+  restartPolicy: Always

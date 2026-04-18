@@ -1,0 +1,39 @@
+# ============================================================
+# SCENARIO 1: CrashLoopBackOff
+# The container starts, prints a message, then exits with
+# code 1 (non-zero = failure). Kubernetes keeps restarting it
+# with exponential backoff until it hits CrashLoopBackOff.
+#
+# Test with:
+#   kas "why is crash-loop-pod crashing?" -n kas-test
+#   kas "pod crashloop in kas-test namespace" -n kas-test -r crash-loop-pod -t pod
+# ============================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crash-loop-pod
+  namespace: kas-test
+  labels:
+    scenario: crashloopbackoff
+    app: crash-loop
+spec:
+  containers:
+    - name: crash-container
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Starting application..."
+          echo "Loading config from /etc/app/config.json"
+          echo "FATAL: Config file not found at /etc/app/config.json"
+          echo "ERROR: Cannot start without configuration"
+          exit 1
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "50m"
+          memory: "32Mi"
+  restartPolicy: Always

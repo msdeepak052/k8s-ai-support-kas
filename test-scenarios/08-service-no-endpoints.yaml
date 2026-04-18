@@ -1,0 +1,114 @@
+# ============================================================
+# SCENARIO 8: Service with No Endpoints
+# A Service whose selector does not match any running Pod.
+# The Service exists and has an IP, but all traffic is
+# dropped because there are zero endpoints. Simulates a
+# label mismatch — common after a rename or typo in selector.
+#
+# Also includes a second Service that targets a port the pod
+# does not actually listen on (port mismatch).
+#
+# Test with:
+#   kas "no-endpoint-svc has no backends" -n kas-test
+#   kas "why is no-endpoint-svc not routing traffic?" -n kas-test -r no-endpoint-svc -t service
+#   kas "wrong-port-svc connection refused" -n kas-test
+# ============================================================
+
+# --- Scenario A: Label mismatch ---
+# A working pod with label app=real-backend
+# A Service selecting app=wrong-backend (typo) — 0 endpoints
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-pod
+  namespace: kas-test
+  labels:
+    scenario: service-no-endpoints
+    app: real-backend        # <-- correct label
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while true; do
+            echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" | nc -l -p 8080 -q 1
+          done
+      ports:
+        - containerPort: 8080
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+  restartPolicy: Always
+
+---
+# Service pointing to app=wrong-backend — selector never matches
+apiVersion: v1
+kind: Service
+metadata:
+  name: no-endpoint-svc
+  namespace: kas-test
+  labels:
+    scenario: service-no-endpoints
+    reason: label-mismatch
+spec:
+  selector:
+    app: wrong-backend       # <-- typo: does not match any pod
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+
+---
+# --- Scenario B: Port mismatch ---
+# Pod listens on 8080, Service targets port 9090 — connection refused
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wrong-port-pod
+  namespace: kas-test
+  labels:
+    scenario: service-no-endpoints
+    reason: port-mismatch
+    app: wrong-port-app
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while true; do
+            echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" | nc -l -p 8080 -q 1
+          done
+      ports:
+        - containerPort: 8080   # <-- listens on 8080
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+  restartPolicy: Always
+
+---
+# Service targets port 9090 — pod isn't listening there
+apiVersion: v1
+kind: Service
+metadata:
+  name: wrong-port-svc
+  namespace: kas-test
+  labels:
+    scenario: service-no-endpoints
+    reason: port-mismatch
+spec:
+  selector:
+    app: wrong-port-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9090         # <-- wrong: pod listens on 8080
+      protocol: TCP
