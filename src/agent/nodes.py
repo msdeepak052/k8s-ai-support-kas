@@ -187,6 +187,49 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     results = await asyncio.gather(*fetch_tasks.values(), return_exceptions=True)
     result_map = dict(zip(task_keys, results))
 
+    # --- Auto-fetch logs for failing pods when no specific resource was named ---
+    # Without -r flag we only have the pod list. A second pass fetches logs for
+    # pods in bad states so the LLM sees actual error messages, not just status.
+    _FAILING_REASONS = {
+        "CrashLoopBackOff", "Error", "OOMKilled",
+        "CreateContainerConfigError", "ErrImagePull", "ImagePullBackOff",
+        "PostStartHookError", "PreStopHookError",
+    }
+    if not resource_name and "pods" in result_map:
+        pods_result = result_map["pods"]
+        if not isinstance(pods_result, Exception) and pods_result.success:
+            pod_list = pods_result.parsed or {}
+            items = pod_list.get("items", []) if pod_list.get("kind") == "PodList" else [pod_list]
+            failing_pod_names = []
+            for pod in items:
+                cs_list = pod.get("status", {}).get("containerStatuses", [])
+                for cs in cs_list:
+                    waiting_reason = cs.get("state", {}).get("waiting", {}).get("reason", "")
+                    last_exit = cs.get("lastState", {}).get("terminated", {})
+                    if waiting_reason in _FAILING_REASONS or last_exit:
+                        pname = pod.get("metadata", {}).get("name", "")
+                        if pname:
+                            failing_pod_names.append(pname)
+                        break
+
+            if failing_pod_names:
+                log_tasks: Dict[str, Any] = {}
+                for pname in failing_pod_names[:3]:   # cap at 3 pods
+                    log_tasks[f"logs__{pname}"] = kubectl.get_logs(pname, namespace, tail=80)
+                    log_tasks[f"prev__{pname}"] = kubectl.get_logs(pname, namespace, tail=80, previous=True)
+
+                logger.info("Auto-fetching logs for %d failing pod(s): %s",
+                            len(failing_pod_names[:3]), failing_pod_names[:3])
+                log_keys = list(log_tasks.keys())
+                log_results = await asyncio.gather(*log_tasks.values(), return_exceptions=True)
+                for lk, lr in zip(log_keys, log_results):
+                    if isinstance(lr, Exception) or not lr.success:
+                        continue
+                    if lk.startswith("logs__"):
+                        result_map[lk] = lr   # store so loop below picks it up
+                    elif lk.startswith("prev__"):
+                        result_map[lk] = lr
+
     # --- Process results ---
     raw_pod_data = []
     raw_deployment_data = []
@@ -249,6 +292,14 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
 
         elif key == "prev_logs" and resource_name:
             raw_prev_logs[resource_name] = result.stdout
+
+        elif key.startswith("logs__"):
+            pod_name = key[6:]
+            raw_logs[pod_name] = result.stdout
+
+        elif key.startswith("prev__"):
+            pod_name = key[6:]
+            raw_prev_logs[pod_name] = result.stdout
 
         elif key == "events":
             pass  # Handled below
@@ -333,17 +384,17 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
     query = state.get("query", "")
     rag = _get_rag()
 
-    # Run in executor to avoid blocking (embedding can be slow)
+    # Run in executor to avoid blocking (first run downloads ~130MB model)
     loop = asyncio.get_event_loop()
     try:
         rag_context = await asyncio.wait_for(
             loop.run_in_executor(None, rag.retrieve, query),
-            timeout=10.0,
+            timeout=60.0,   # first run can take 30-60s to download + load model
         )
         logger.debug("RAG retrieved %d chars", len(rag_context))
     except asyncio.TimeoutError:
         rag_context = None
-        logger.warning("RAG retrieval timed out")
+        logger.warning("RAG retrieval timed out (model may still be loading — will be faster next run)")
     except Exception as exc:
         rag_context = None
         logger.warning("RAG retrieval failed: %s", exc)

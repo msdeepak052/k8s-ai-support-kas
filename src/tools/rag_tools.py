@@ -40,11 +40,11 @@ def _load_embedder(model_name: str):
         _embedder = SentenceTransformer(model_name)
         logger.info("Embedding model loaded")
         return _embedder
-    except ImportError:
-        logger.warning("sentence-transformers not installed. RAG will be disabled.")
+    except ImportError as exc:
+        logger.warning("sentence-transformers unavailable (%s). RAG will use keyword fallback.", exc)
         return None
     except Exception as exc:
-        logger.error("Failed to load embedding model: %s", exc)
+        logger.warning("Failed to load embedding model (%s). RAG will use keyword fallback.", exc)
         return None
 
 
