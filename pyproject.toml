@@ -46,6 +46,7 @@ langchain-community = {version = "^0.3.0", optional = true}  # For Ollama
 # RAG / Embeddings
 sentence-transformers = {version = "^3.0.0", optional = true}  # Local embeddings (no API key)
 chromadb = {version = "^0.5.0", optional = true}               # Vector store
+tokenizers = {version = ">=0.21.0", optional = true}           # Pin to avoid broken 0.20.3 sdist
 
 # Token counting
 tiktoken = {version = "^0.8.0", optional = true}
@@ -76,7 +77,7 @@ openai = ["langchain-openai", "tiktoken"]
 gemini = ["langchain-google-genai"]
 claude = ["langchain-anthropic"]
 ollama = ["langchain-community"]
-rag = ["sentence-transformers", "chromadb"]
+rag = ["sentence-transformers", "chromadb", "tokenizers"]
 all = [
     "langchain-openai",
     "langchain-google-genai",
@@ -84,6 +85,7 @@ all = [
     "langchain-community",
     "sentence-transformers",
     "chromadb",
+    "tokenizers",
     "tiktoken",
 ]
 
@@ -148,3 +150,8 @@ strict = false
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[tool.uv]
+# tokenizers 0.20.3 ships a broken pyproject.toml (missing project.version).
+# uv cannot build it from source. Force >=0.21.0 where this is fixed.
+override-dependencies = ["tokenizers>=0.21.0"]
