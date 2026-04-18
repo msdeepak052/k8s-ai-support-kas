@@ -100,7 +100,7 @@ class KubectlWrapper:
 
         timeout_secs = timeout or self.settings.kubectl_timeout
 
-        logger.debug("Running kubectl command: %s", " ".join(cmd))
+        logger.debug("[KUBECTL] exec: %s", " ".join(cmd))
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -144,9 +144,11 @@ class KubectlWrapper:
             )
 
             if rc != 0:
-                logger.warning("kubectl returned non-zero: %d | stderr: %s", rc, stderr)
+                logger.warning("[KUBECTL] rc=%d | cmd: %s", rc, " ".join(cmd))
+                logger.debug("[KUBECTL] stderr: %s", stderr[:300] if stderr else "(empty)")
             else:
-                logger.debug("kubectl success | stdout length: %d chars", len(stdout))
+                logger.debug("[KUBECTL] OK rc=0 | stdout=%d chars | cmd: %s",
+                             len(stdout), " ".join(cmd))
 
             return result
 
@@ -194,12 +196,17 @@ class KubectlWrapper:
         tail: int = 100,
     ) -> KubectlResult:
         """Fetch pod logs — last N lines, optionally previous container."""
+        logger.debug("[KUBECTL-LOGS] pod=%s, ns=%s, previous=%s, tail=%d",
+                     pod_name, namespace, previous, tail)
         args = [pod_name, f"--tail={tail}"]
         if container:
             args += ["--container", container]
         if previous:
             args.append("--previous")
-        return await self._run("logs", args, namespace=namespace, output_json=False)
+        result = await self._run("logs", args, namespace=namespace, output_json=False)
+        logger.debug("[KUBECTL-LOGS] pod=%s previous=%s → success=%s, %d chars",
+                     pod_name, previous, result.success, len(result.stdout))
+        return result
 
     async def get_events(
         self,

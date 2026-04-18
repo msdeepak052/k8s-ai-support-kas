@@ -32,22 +32,55 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _setup_logging(verbose: bool, log_level: str = "INFO"):
-    """Configure structured JSON logging."""
-    import structlog
+def _setup_logging(verbose: bool, debug: bool = False, log_level: str = "INFO"):
+    """
+    Configure stdlib logging for all k8s-ai-support modules.
 
-    level = logging.DEBUG if verbose else getattr(logging, log_level, logging.INFO)
+    Levels:
+      --debug   → DEBUG  — full internal data-flow trace on stderr
+      --verbose → INFO   — progress messages only
+      default   → WARNING — silent unless something goes wrong
+    """
+    if debug:
+        effective_level = logging.DEBUG
+    elif verbose:
+        effective_level = logging.INFO
+    else:
+        effective_level = getattr(logging, log_level.upper(), logging.WARNING)
 
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer() if not verbose else structlog.dev.ConsoleRenderer(),
-        ],
+    # Wire up the root stdlib logger — every logging.getLogger(__name__) in the
+    # codebase flows through here.
+    fmt = (
+        "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
+        if debug
+        else "%(levelname)s: %(message)s"
     )
+    logging.basicConfig(
+        level=effective_level,
+        format=fmt,
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+        force=True,   # override any handlers already attached
+    )
+
+    # Silence chatty third-party libraries — their logs are noise in debug mode
+    _ALWAYS_SILENCE = [
+        "httpx", "httpcore", "urllib3", "PIL", "tqdm", "filelock",
+        "sentence_transformers", "torch", "transformers", "huggingface_hub",
+    ]
+    # In non-debug mode also silence framework internals
+    _PROD_SILENCE = ["asyncio", "chromadb", "langchain", "langchain_core", "langgraph"]
+    silence_at = logging.WARNING
+    for lib in _ALWAYS_SILENCE:
+        logging.getLogger(lib).setLevel(silence_at)
+    if not debug:
+        for lib in _PROD_SILENCE:
+            logging.getLogger(lib).setLevel(silence_at)
+
+    if debug:
+        logging.getLogger(__name__).debug(
+            "Debug logging enabled (level=DEBUG). All internal data-flow will be traced."
+        )
 
 
 def _print_result(state: dict, output_format: str, verbose: bool):
@@ -104,6 +137,7 @@ def diagnose(
     resource_type: Optional[str] = typer.Option(None, "--type", "-t", help="Resource type (pod, deployment, service, node, pvc)"),
     output: OutputFormat = typer.Option(OutputFormat.TABLE, "--output", "-o", help="Output format"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output with execution details"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging — traces internal data flow to stderr"),
     provider: Optional[LLMProvider] = typer.Option(None, "--provider", "-p", help="LLM provider override"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model override"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Start interactive REPL mode"),
@@ -119,10 +153,12 @@ def diagnose(
 
       k8s-ai-support "imagepull error" -r nginx-deployment -t deployment
 
+      k8s-ai-support "crash-loop-pod failing" -n kas-test --debug
+
       k8s-ai-support -i   (interactive mode)
     """
     settings = get_settings()
-    _setup_logging(verbose, settings.log_level.value)
+    _setup_logging(verbose, debug, settings.log_level.value)
 
     # Apply CLI overrides to settings
     if provider:
@@ -135,24 +171,26 @@ def diagnose(
         reset_settings_cache()
 
     if interactive or not query:
-        _run_interactive(namespace, output.value, verbose)
+        _run_interactive(namespace, output.value, verbose, debug)
         return
 
-    _run_single_query(query, namespace, resource, resource_type, output.value, verbose)
+    _run_single_query(query, namespace, resource, resource_type, output.value, verbose, debug)
 
 
-def _run_single_query(query: str, namespace: str, resource: Optional[str], resource_type: Optional[str], output_format: str, verbose: bool):
+def _run_single_query(
+    query: str,
+    namespace: str,
+    resource: Optional[str],
+    resource_type: Optional[str],
+    output_format: str,
+    verbose: bool,
+    debug: bool = False,
+):
     """Execute a single query and print results."""
     agent = get_agent()
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress.add_task("Analyzing Kubernetes issue...", total=None)
-
+    # In debug mode skip the spinner — it would interleave with log output
+    if debug:
         state = asyncio.run(
             agent.run(
                 query=query,
@@ -163,11 +201,29 @@ def _run_single_query(query: str, namespace: str, resource: Optional[str], resou
                 verbose=verbose,
             )
         )
+    else:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Analyzing Kubernetes issue...", total=None)
+            state = asyncio.run(
+                agent.run(
+                    query=query,
+                    namespace=namespace,
+                    resource_name=resource,
+                    resource_type=resource_type,
+                    output_format=output_format,
+                    verbose=verbose,
+                )
+            )
 
     _print_result(state, output_format, verbose)
 
 
-def _run_interactive(namespace: str, output_format: str, verbose: bool):
+def _run_interactive(namespace: str, output_format: str, verbose: bool, debug: bool = False):
     """Start interactive REPL mode."""
     console.print(Panel(
         "[bold cyan]k8s-ai-support[/bold cyan] — Interactive Kubernetes Troubleshooting\n"

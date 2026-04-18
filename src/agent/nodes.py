@@ -84,17 +84,27 @@ async def router_node(state: AgentState) -> AgentState:
     query = state.get("query", "")
     settings = get_settings()
 
-    logger.debug("Router: analyzing query: %s", query)
+    logger.debug("[ROUTER] query=%r", query)
+    logger.debug("[ROUTER] explicit resource_name=%r, resource_type=%r",
+                 state.get("resource_name"), state.get("resource_type"))
 
-    needs_cluster = bool(CLUSTER_KEYWORDS.search(query)) or bool(state.get("resource_name"))
+    _cluster_kw_hit = bool(CLUSTER_KEYWORDS.search(query))
+    _rag_kw_hit = bool(RAG_KEYWORDS.search(query))
+    logger.debug("[ROUTER] cluster_keywords_match=%s, rag_keywords_match=%s",
+                 _cluster_kw_hit, _rag_kw_hit)
+
+    needs_cluster = _cluster_kw_hit or bool(state.get("resource_name"))
     needs_rag = bool(RAG_KEYWORDS.search(query)) or not needs_cluster
 
     # Always try RAG for better context
     needs_rag = True
 
+    logger.debug("[ROUTER] needs_cluster=%s, needs_rag=%s (rag always=True)", needs_cluster, needs_rag)
+
     # Probe cluster connectivity
     cluster_reachable = False
     if needs_cluster:
+        logger.debug("[ROUTER] probing cluster connectivity (timeout=5s)...")
         try:
             kubectl = _get_kubectl()
             cluster_reachable = await asyncio.wait_for(
@@ -104,8 +114,13 @@ async def router_node(state: AgentState) -> AgentState:
             logger.warning("Cluster probe failed: %s", exc)
             cluster_reachable = False
 
+    logger.debug("[ROUTER] cluster_reachable=%s", cluster_reachable)
+
     if not cluster_reachable and needs_cluster:
         logger.info("Cluster unreachable — switching to RAG-only mode")
+
+    logger.debug("[ROUTER] final route → needs_cluster_data=%s, needs_rag=%s",
+                 needs_cluster and cluster_reachable, needs_rag)
 
     return {
         **state,
@@ -141,6 +156,35 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
 
     # Determine what to fetch based on resource type and query
     query = (state.get("query") or "").lower()
+
+    logger.debug("[FETCH] namespace=%r, resource_name=%r (from -r flag), resource_type=%r",
+                 namespace, resource_name, resource_type)
+
+    # --- Auto-detect resource name from query when -r flag is absent ---
+    # e.g. "why is crash-loop-pod crashing?" → resource_name = "crash-loop-pod"
+    # Kubernetes names are lowercase alphanumeric + hyphens. We look for tokens
+    # that look like real object names (at least one hyphen, min 5 chars) and
+    # exclude common error-message phrases that happen to look like names.
+    _auto_detected_name = False
+    if not resource_name:
+        _SKIP_PHRASES = {
+            # error-state labels that look like names but aren't
+            "crash-loop", "crash-loop-back", "crash-loop-back-off",
+            "back-off", "image-pull", "image-pull-back-off", "err-image-pull",
+            "non-zero", "read-only", "exit-code", "init-container",
+            "run-as", "node-not-ready", "out-of-memory", "oom-killed",
+            "liveness-probe", "readiness-probe", "post-start", "pre-stop",
+        }
+        _candidates = re.findall(r'\b([a-z][a-z0-9]*(?:-[a-z0-9]+)+)\b', query)
+        logger.debug("[FETCH] name-like tokens in query: %s", _candidates)
+        for _m in _candidates:
+            if _m not in _SKIP_PHRASES and len(_m) >= 5:
+                resource_name = _m
+                _auto_detected_name = True
+                logger.debug("[FETCH] auto-detected resource_name=%r from query", resource_name)
+                break
+        if not _auto_detected_name:
+            logger.debug("[FETCH] no resource name auto-detected — will use namespace-wide list")
 
     # --- Always fetch events ---
     fetch_tasks = {
@@ -182,10 +226,21 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
         fetch_tasks["pods"] = kubectl.get_pods(namespace)
 
     # --- Execute all fetches in parallel ---
+    logger.debug("[FETCH] planned tasks: %s", list(fetch_tasks.keys()))
     logger.info("Fetching %d resource types in parallel...", len(fetch_tasks))
     task_keys = list(fetch_tasks.keys())
     results = await asyncio.gather(*fetch_tasks.values(), return_exceptions=True)
     result_map = dict(zip(task_keys, results))
+
+    # Log per-task outcomes so it's clear what arrived and what failed
+    for _k, _r in result_map.items():
+        if isinstance(_r, Exception):
+            logger.debug("[FETCH] %-18s → EXCEPTION: %s", _k, _r)
+        elif _r.success:
+            logger.debug("[FETCH] %-18s → OK       (%d chars stdout)", _k, len(_r.stdout))
+        else:
+            _detail = (_r.stderr or _r.error_message or "")[:120]
+            logger.debug("[FETCH] %-18s → FAIL     rc=%s  %s", _k, _r.return_code, _detail)
 
     # --- Auto-fetch logs for failing pods when no specific resource was named ---
     # Without -r flag we only have the pod list. A second pass fetches logs for
@@ -212,6 +267,8 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
                             failing_pod_names.append(pname)
                         break
 
+            logger.debug("[FETCH] failing pods detected from pod list: %s", failing_pod_names)
+
             if failing_pod_names:
                 log_tasks: Dict[str, Any] = {}
                 for pname in failing_pod_names[:3]:   # cap at 3 pods
@@ -220,6 +277,7 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
 
                 logger.info("Auto-fetching logs for %d failing pod(s): %s",
                             len(failing_pod_names[:3]), failing_pod_names[:3])
+                logger.debug("[FETCH] auto-fetch log tasks: %s", list(log_tasks.keys()))
                 log_keys = list(log_tasks.keys())
                 log_results = await asyncio.gather(*log_tasks.values(), return_exceptions=True)
                 for lk, lr in zip(log_keys, log_results):
@@ -310,11 +368,21 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     if events_result and not isinstance(events_result, Exception) and events_result.success:
         raw_events_json = events_result.parsed
 
+    # --- Summary of what was collected ---
+    logger.debug("[FETCH] raw_logs keys: %s", list(raw_logs.keys()))
+    for _pod, _txt in raw_logs.items():
+        logger.debug("[FETCH] log[%s] = %d chars", _pod, len(_txt or ""))
+    logger.debug("[FETCH] raw_prev_logs keys: %s", list(raw_prev_logs.keys()))
+    for _pod, _txt in raw_prev_logs.items():
+        logger.debug("[FETCH] prev_log[%s] = %d chars", _pod, len(_txt or ""))
+
     logger.info(
         "Fetched: %d pods, %d deployments, %d nodes, %d services, %d pvcs",
         len(raw_pod_data), len(raw_deployment_data), len(raw_node_data),
         len(raw_service_data), len(raw_pvc_data),
     )
+    logger.debug("[FETCH] pod names collected: %s",
+                 [p.get("metadata", {}).get("name") for p in raw_pod_data])
 
     return {
         **state,
@@ -350,6 +418,19 @@ async def summarize_node(state: AgentState) -> AgentState:
         log = state.get("raw_logs", {}).get(pod_name)
         prev_log = state.get("raw_prev_logs", {}).get(pod_name)
         pod_data.append((pod_json, log, prev_log))
+        logger.debug(
+            "[SUMMARIZE] pod=%-40s  log=%s chars  prev_log=%s chars",
+            pod_name,
+            len(log) if log else "none",
+            len(prev_log) if prev_log else "none",
+        )
+
+    logger.debug("[SUMMARIZE] total pods=%d, deployments=%d, nodes=%d, services=%d, pvcs=%d",
+                 len(pod_data),
+                 len(state.get("raw_deployment_data") or []),
+                 len(state.get("raw_node_data") or []),
+                 len(state.get("raw_service_data") or []),
+                 len(state.get("raw_pvc_data") or []))
 
     structured = summarizer.build_context(
         query=query,
@@ -365,6 +446,8 @@ async def summarize_node(state: AgentState) -> AgentState:
     )
 
     logger.info("Summarized context: %d tokens", structured.token_count)
+    logger.debug("[SUMMARIZE] structured context keys: %s",
+                 list(structured.model_dump().keys()))
 
     return {
         **state,
@@ -384,6 +467,8 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
     query = state.get("query", "")
     rag = _get_rag()
 
+    logger.debug("[RAG] starting retrieval for query=%r", query)
+
     # Run in executor to avoid blocking (first run downloads ~130MB model)
     loop = asyncio.get_event_loop()
     try:
@@ -391,7 +476,9 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
             loop.run_in_executor(None, rag.retrieve, query),
             timeout=60.0,   # first run can take 30-60s to download + load model
         )
-        logger.debug("RAG retrieved %d chars", len(rag_context))
+        logger.debug("[RAG] retrieved %d chars of context", len(rag_context) if rag_context else 0)
+        if rag_context:
+            logger.debug("[RAG] context preview: %s...", rag_context[:120].replace("\n", " "))
     except asyncio.TimeoutError:
         rag_context = None
         logger.warning("RAG retrieval timed out (model may still be loading — will be faster next run)")
@@ -420,13 +507,20 @@ async def analyze_node(state: AgentState) -> AgentState:
     cluster_reachable = state.get("cluster_reachable", True)
     query = state.get("query", "")
 
+    logger.debug("[ANALYZE] cluster_reachable=%s, has_structured_context=%s, has_rag_context=%s",
+                 cluster_reachable, bool(structured_context), bool(rag_context))
+    if isinstance(structured_context, dict):
+        logger.debug("[ANALYZE] structured_context keys: %s", list(structured_context.keys()))
+
     # Build appropriate prompt
     if cluster_reachable and structured_context:
         user_prompt = build_analysis_prompt(structured_context, rag_context)
+        logger.debug("[ANALYZE] mode=cluster+rag, prompt=%d chars", len(user_prompt))
     else:
         # RAG-only mode
         rag_context = rag_context or _get_rag().retrieve(query)
         user_prompt = build_rag_only_prompt(query, rag_context)
+        logger.debug("[ANALYZE] mode=rag-only, prompt=%d chars", len(user_prompt))
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
@@ -434,6 +528,8 @@ async def analyze_node(state: AgentState) -> AgentState:
     ]
 
     logger.info("Calling LLM: provider=%s, model=%s", settings.provider.value, settings.model)
+    logger.debug("[ANALYZE] total prompt size (system+user): %d chars",
+                 len(SYSTEM_PROMPT) + len(user_prompt))
 
     try:
         llm = LLMFactory.create(settings)
@@ -446,9 +542,12 @@ async def analyze_node(state: AgentState) -> AgentState:
         )
 
         raw_content = response.content if hasattr(response, "content") else str(response)
+        logger.debug("[ANALYZE] LLM response: %d chars", len(raw_content))
+        logger.debug("[ANALYZE] response preview: %s...", raw_content[:200].replace("\n", " "))
 
         # Parse JSON from response
         diagnosis = _extract_json(raw_content)
+        logger.debug("[ANALYZE] JSON parse success=%s", bool(diagnosis))
 
         if not diagnosis:
             # Fallback structured response

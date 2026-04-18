@@ -36,9 +36,10 @@ def _load_embedder(model_name: str):
 
     try:
         from sentence_transformers import SentenceTransformer
-        logger.info("Loading embedding model: %s", model_name)
-        _embedder = SentenceTransformer(model_name)
-        logger.info("Embedding model loaded")
+        logger.info("Loading embedding model: %s (device=cpu)", model_name)
+        # Force CPU — avoids CUDA compatibility issues with older GPUs (CC < 7.5)
+        _embedder = SentenceTransformer(model_name, device="cpu")
+        logger.info("Embedding model loaded on CPU")
         return _embedder
     except ImportError as exc:
         logger.warning("sentence-transformers unavailable (%s). RAG will use keyword fallback.", exc)
@@ -464,16 +465,20 @@ class RAGRetriever:
         Retrieve top-k relevant chunks for the query.
         Returns formatted string for inclusion in LLM context.
         """
+        logger.debug("[RAG] retrieve called: query=%r", query)
         self._initialize_vector_store()
 
         if self._collection is None:
+            logger.debug("[RAG] no vector collection — using keyword fallback")
             return self._fallback_retrieve(query)
 
         k = top_k or self.settings.rag_top_k
         embedder = self._get_embedder()
         if embedder is None:
+            logger.debug("[RAG] embedder unavailable — using keyword fallback")
             return self._fallback_retrieve(query)
 
+        logger.debug("[RAG] semantic search: top_k=%d", k)
         try:
             query_embedding = embedder.encode(query).tolist()
             results = self._collection.query(
@@ -483,6 +488,7 @@ class RAGRetriever:
             )
 
             if not results or not results["documents"]:
+                logger.debug("[RAG] empty results from vector store — using keyword fallback")
                 return self._fallback_retrieve(query)
 
             docs = results["documents"][0]
@@ -493,15 +499,21 @@ class RAGRetriever:
             formatted_chunks = []
             for doc, meta, dist in zip(docs, metas, distances):
                 relevance = 1.0 - dist  # cosine distance → similarity
+                logger.debug("[RAG] chunk: title=%r relevance=%.3f", meta.get("title"), relevance)
                 if relevance < 0.3:  # Skip low-relevance chunks
+                    logger.debug("[RAG]   → skipped (below 0.3 threshold)")
                     continue
                 formatted_chunks.append(
                     f"[K8s Docs: {meta.get('title', 'Unknown')} | Relevance: {relevance:.2f}]\n{doc}"
                 )
 
             if not formatted_chunks:
+                logger.debug("[RAG] no chunks above relevance threshold — using keyword fallback")
                 return self._fallback_retrieve(query)
 
+            logger.debug("[RAG] returning %d semantic chunks (%d total chars)",
+                         len(formatted_chunks),
+                         sum(len(c) for c in formatted_chunks))
             return "\n\n---\n\n".join(formatted_chunks)
 
         except Exception as exc:
@@ -510,6 +522,7 @@ class RAGRetriever:
 
     def _fallback_retrieve(self, query: str) -> str:
         """Keyword-based fallback when vector search unavailable."""
+        logger.debug("[RAG-FALLBACK] keyword search for query=%r", query)
         query_lower = query.lower()
         matches = []
 
@@ -545,8 +558,11 @@ class RAGRetriever:
             # Return first 2 most general docs
             matched_ids = {"crashloopbackoff", "pending_pod"}
 
+        logger.debug("[RAG-FALLBACK] matched doc IDs: %s", matched_ids)
         docs = [d for d in K8S_KNOWLEDGE_BASE if d["id"] in matched_ids]
-        return "\n\n---\n\n".join(
+        result = "\n\n---\n\n".join(
             f"[K8s Docs: {d['title']}]\n{d['content'][:800]}"
             for d in docs[:self.settings.rag_top_k]
         )
+        logger.debug("[RAG-FALLBACK] returning %d docs (%d chars)", len(docs), len(result))
+        return result
