@@ -43,7 +43,7 @@ kubectl version --client
 ### Clone and install globally
 
 ```bash
-git clone https://github.com/your-org/k8s-ai-support
+git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
 cd k8s-ai-support
 
 # One-time global install — registers kas and k8s-ai-support as system commands
