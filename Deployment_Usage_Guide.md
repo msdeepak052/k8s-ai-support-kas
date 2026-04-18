@@ -352,12 +352,12 @@ pip install awscli   # or: brew install awscli
 aws configure
 # AWS Access Key ID: ...
 # AWS Secret Access Key: ...
-# Default region: us-east-1
+# Default region: ap-south-1
 
 # Add EKS cluster to kubeconfig
 aws eks update-kubeconfig \
-  --region us-east-1 \
-  --name your-cluster-name
+  --region ap-south-1 \
+  --name k8s-ai-support-cluster
 
 # Verify
 kubectl get nodes
@@ -383,7 +383,7 @@ The MCP server automatically uses your active kubeconfig, so once you run `aws e
 ```bash
 # Confirm active context
 kubectl config current-context
-# Should show: arn:aws:eks:us-east-1:123456789:cluster/your-cluster-name
+# Should show: arn:aws:eks:ap-south-1:339712902352:cluster/k8s-ai-support-cluster
 
 # Start MCP server — it uses that context automatically
 kas mcp
@@ -399,8 +399,8 @@ Deploys the agent as a pod inside your EKS cluster. Useful for team access or CI
 
 ```bash
 eksctl utils associate-iam-oidc-provider \
-  --region us-east-1 \
-  --cluster your-cluster-name \
+  --region ap-south-1 \
+  --cluster k8s-ai-support-cluster \
   --approve
 ```
 
@@ -434,9 +434,9 @@ aws iam create-policy \
 eksctl create iamserviceaccount \
   --name k8s-ai-support \
   --namespace k8s-ai \
-  --cluster your-cluster-name \
-  --region us-east-1 \
-  --attach-policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/k8s-ai-support-readonly \
+  --cluster k8s-ai-support-cluster \
+  --region ap-south-1 \
+  --attach-policy-arn arn:aws:iam::339712902352:policy/k8s-ai-support-readonly \
   --approve \
   --override-existing-serviceaccounts
 ```
@@ -461,7 +461,7 @@ helm install k8s-ai-support helm/k8s-ai-support/ \
   --set llm.provider=openai \
   --set llm.model=gpt-4o-mini \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=\
-arn:aws:iam::YOUR_ACCOUNT_ID:role/eksctl-k8s-ai-support-role
+arn:aws:iam::339712902352:role/eksctl-k8s-ai-support-role
 
 # Verify deployment
 helm status k8s-ai-support -n k8s-ai
@@ -505,31 +505,31 @@ Build the image, push to ECR, deploy via Helm. Best for production — no public
 ```bash
 aws ecr create-repository \
   --repository-name k8s-ai-support \
-  --region us-east-1 \
+  --region ap-south-1 \
   --image-scanning-configuration scanOnPush=true
 
 # Note the repositoryUri from output:
-# YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/k8s-ai-support
+# 339712902352.dkr.ecr.ap-south-1.amazonaws.com/k8s-ai-support
 ```
 
 ### Step 2 — Build and push image
 
 ```bash
 # Login to ECR
-aws ecr get-login-password --region us-east-1 | \
+aws ecr get-login-password --region ap-south-1 | \
   docker login --username AWS \
-  --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
+  --password-stdin 339712902352.dkr.ecr.ap-south-1.amazonaws.com
 
 # Build
 docker build -t k8s-ai-support:1.0.0 .
 
 # Tag
 docker tag k8s-ai-support:1.0.0 \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/k8s-ai-support:1.0.0
+  339712902352.dkr.ecr.ap-south-1.amazonaws.com/k8s-ai-support:1.0.0
 
 # Push
 docker push \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/k8s-ai-support:1.0.0
+  339712902352.dkr.ecr.ap-south-1.amazonaws.com/k8s-ai-support:1.0.0
 ```
 
 ### Step 3 — Deploy from ECR
@@ -538,7 +538,7 @@ docker push \
 helm install k8s-ai-support helm/k8s-ai-support/ \
   --namespace k8s-ai \
   --create-namespace \
-  --set image.repository=YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/k8s-ai-support \
+  --set image.repository=339712902352.dkr.ecr.ap-south-1.amazonaws.com/k8s-ai-support \
   --set image.tag=1.0.0 \
   --set image.pullPolicy=Always \
   --set apiKeys.existingSecret=k8s-ai-secrets \
@@ -570,7 +570,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ap-south-1
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -582,7 +582,7 @@ jobs:
 
       - name: Deploy to EKS
         run: |
-          aws eks update-kubeconfig --region us-east-1 --name your-cluster-name
+          aws eks update-kubeconfig --region ap-south-1 --name k8s-ai-support-cluster
           helm upgrade --install k8s-ai-support helm/k8s-ai-support/ \
             --namespace k8s-ai \
             --set image.repository=${{ secrets.ECR_REPO }} \

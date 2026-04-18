@@ -1,0 +1,53 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: k8s-ai-support-cluster
+  region: ap-south-1
+  version: "1.34"
+  tags:
+    Environment: testing
+    Project: k8s-ai-tools
+    ManagedBy: eksctl
+
+vpc:
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: false
+
+iam:
+  withOIDC: true
+
+managedNodeGroups:
+  - name: k8s-ai-nodes
+    instanceType: t3.xlarge
+    minSize: 2
+    maxSize: 3
+    desiredCapacity: 2
+    volumeSize: 50
+    volumeType: gp3
+    amiFamily: AmazonLinux2023
+    labels:
+      role: worker
+      workload: k8stools
+    tags:
+      Environment: testing
+      NodeGroup: k8s-ai-nodes
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        ebs: true
+
+addons:
+  - name: vpc-cni
+    version: latest
+  - name: coredns
+    version: latest
+  - name: kube-proxy
+    version: latest
+  - name: aws-ebs-csi-driver
+    version: latest
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: []
