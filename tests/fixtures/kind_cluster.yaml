@@ -1,0 +1,230 @@
+# Kind cluster configuration for integration testing
+# Creates a 1-control-plane + 2-worker cluster with broken pod scenarios
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: k8s-ai-test
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.35.0
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    labels:
+      topology.kubernetes.io/zone: us-east-1a
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    labels:
+      topology.kubernetes.io/zone: us-east-1b
+
+---
+# Test namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-ai-test
+
+---
+# Broken Pod 1: CrashLoopBackOff (bad command)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crashloop-pod
+  namespace: k8s-ai-test
+  labels:
+    app: crashloop-test
+    scenario: crashloopbackoff
+spec:
+  containers:
+    - name: crash-container
+      image: busybox:1.35
+      command: ["/bin/sh", "-c", "echo 'starting...'; sleep 2; exit 1"]
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "50m"
+          memory: "32Mi"
+  restartPolicy: Always
+
+---
+# Broken Pod 2: OOMKilled (memory limit too low)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-pod
+  namespace: k8s-ai-test
+  labels:
+    app: oom-test
+    scenario: oomkilled
+spec:
+  containers:
+    - name: memory-eater
+      image: busybox:1.35
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # Allocate more memory than limit allows
+          dd if=/dev/zero of=/dev/null bs=1M count=200 &
+          sleep 30
+      resources:
+        requests:
+          memory: "10Mi"
+        limits:
+          memory: "20Mi"  # Very low to trigger OOM
+
+---
+# Broken Pod 3: ImagePullBackOff (nonexistent image)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imagepull-pod
+  namespace: k8s-ai-test
+  labels:
+    app: imagepull-test
+    scenario: imagepullbackoff
+spec:
+  containers:
+    - name: bad-image
+      image: this-image-does-not-exist-xyz:v999.999
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+
+---
+# Broken Pod 4: Pending (resource exhaustion)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pending-pod
+  namespace: k8s-ai-test
+  labels:
+    app: pending-test
+    scenario: pending
+spec:
+  containers:
+    - name: big-container
+      image: busybox:1.35
+      command: ["sleep", "3600"]
+      resources:
+        requests:
+          cpu: "99999m"    # Impossible to schedule
+          memory: "99999Gi"
+        limits:
+          cpu: "99999m"
+          memory: "99999Gi"
+
+---
+# Broken Deployment: Wrong replica count with failing pods
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-deployment
+  namespace: k8s-ai-test
+  labels:
+    app: broken-deploy
+    scenario: deployment-failing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: broken-deploy
+  template:
+    metadata:
+      labels:
+        app: broken-deploy
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.35
+          command: ["/bin/sh", "-c", "exit 2"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+
+---
+# Service with wrong selector (no matching pods)
+apiVersion: v1
+kind: Service
+metadata:
+  name: broken-service
+  namespace: k8s-ai-test
+  labels:
+    scenario: no-endpoints
+spec:
+  selector:
+    app: this-app-does-not-exist  # Wrong selector
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+
+---
+# PVC stuck in pending (no StorageClass)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stuck-pvc
+  namespace: k8s-ai-test
+  labels:
+    scenario: pvc-pending
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nonexistent-storage-class
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Working pod for baseline comparison
+apiVersion: v1
+kind: Pod
+metadata:
+  name: healthy-pod
+  namespace: k8s-ai-test
+  labels:
+    app: healthy
+    scenario: healthy
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25-alpine
+      ports:
+        - containerPort: 80
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "100m"
+          memory: "64Mi"
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 3
+        periodSeconds: 5

@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-ai-support.fullname" . }}
+  labels:
+    {{- include "k8s-ai-support.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "k8s-ai-support.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "k8s-ai-support.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "k8s-ai-support.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "src.cli.main"]
+          {{- if .Values.mcp.enabled }}
+          args: ["mcp"]
+          {{- else }}
+          args: ["--help"]
+          {{- end }}
+          env:
+            - name: K8S_AI_PROVIDER
+              value: {{ .Values.llm.provider | quote }}
+            - name: K8S_AI_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: K8S_AI_TEMPERATURE
+              value: {{ .Values.llm.temperature | quote }}
+            - name: K8S_AI_TOKEN_BUDGET
+              value: {{ .Values.llm.tokenBudget | quote }}
+            - name: K8S_AI_OLLAMA_URL
+              value: {{ .Values.llm.ollamaUrl | quote }}
+            - name: K8S_AI_LOG_LEVEL
+              value: {{ .Values.logging.level | quote }}
+            - name: K8S_AI_LOG_FORMAT
+              value: {{ .Values.logging.format | quote }}
+            - name: K8S_AI_DEFAULT_NAMESPACE
+              value: {{ .Values.kubernetes.defaultNamespace | quote }}
+            - name: K8S_AI_KUBECTL_TIMEOUT
+              value: {{ .Values.kubernetes.kubectlTimeout | quote }}
+            {{- if .Values.mcp.enabled }}
+            - name: K8S_AI_MCP_RATE_LIMIT
+              value: {{ .Values.mcp.rateLimit | quote }}
+            {{- end }}
+            # API Keys from secret
+            {{- if .Values.apiKeys.existingSecret }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiKeys.existingSecret }}
+                  key: {{ .Values.apiKeys.openaiApiKeyKey }}
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiKeys.existingSecret }}
+                  key: {{ .Values.apiKeys.geminiApiKeyKey }}
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiKeys.existingSecret }}
+                  key: {{ .Values.apiKeys.anthropicApiKeyKey }}
+                  optional: true
+            {{- else }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k8s-ai-support.fullname" . }}-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k8s-ai-support.fullname" . }}-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "k8s-ai-support.fullname" . }}-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            {{- end }}
+          volumeMounts:
+            - name: cache
+              mountPath: /home/k8sai/.cache/k8s-ai
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: cache
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "k8s-ai-support.fullname" . }}-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,115 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.cert
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# Poetry
+poetry.lock  # Include if you want reproducible builds, exclude for libraries
+
+# uv
+.uv/
+uv.lock  # Remove this line to commit the lockfile for reproducible installs
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# IDE
+.vscode/
+!.vscode/settings.json.example
+!.vscode/mcp.json.example
+.idea/
+
+# Claude Code
+.claude/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# K8s / Helm
+*.kubeconfig
+kubeconfig
+helm/k8s-ai-support/charts/
+
+# Cache and embeddings (large files)
+.cache/
+*.faiss
+*.index
+chroma_db/
+__pycache__/
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
+tmp/
+temp/

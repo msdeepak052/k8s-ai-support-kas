@@ -1,0 +1,134 @@
+version: "3.9"
+
+# Local development and testing stack
+# Usage:
+#   docker-compose up k8s-ai-support     # Run the agent
+#   docker-compose run --rm tester      # Run tests
+#   docker-compose up chroma            # Start standalone Chroma DB
+
+services:
+  # ─────────────────────────── K8s-AI-Support Agent ──────────────────────────────
+  k8s-ai-support:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: k8s-ai-support:latest
+    container_name: k8s-ai-support
+    environment:
+      # LLM Provider (set via .env file or environment)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - K8S_AI_PROVIDER=${K8S_AI_PROVIDER:-openai}
+      - K8S_AI_MODEL=${K8S_AI_MODEL:-gpt-4o-mini}
+      - K8S_AI_LOG_LEVEL=${K8S_AI_LOG_LEVEL:-INFO}
+      - K8S_AI_TOKEN_BUDGET=${K8S_AI_TOKEN_BUDGET:-8000}
+      # For Ollama support
+      - K8S_AI_OLLAMA_URL=${K8S_AI_OLLAMA_URL:-http://ollama:11434}
+    volumes:
+      # Mount kubeconfig for cluster access
+      - ${HOME}/.kube:/home/k8sai/.kube:ro
+      # Persist embeddings cache
+      - k8s-ai-cache:/home/k8sai/.cache/k8s-ai
+    stdin_open: true
+    tty: true
+    restart: "no"
+    profiles: ["agent"]
+
+  # ─────────────────────────── MCP Server Mode ────────────────────────────
+  k8s-ai-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: k8s-ai-support:latest
+    container_name: k8s-ai-mcp
+    command: ["mcp"]
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - K8S_AI_PROVIDER=${K8S_AI_PROVIDER:-openai}
+      - K8S_AI_MODEL=${K8S_AI_MODEL:-gpt-4o-mini}
+      - K8S_AI_MCP_RATE_LIMIT=10
+    volumes:
+      - ${HOME}/.kube:/home/k8sai/.kube:ro
+      - k8s-ai-cache:/home/k8sai/.cache/k8s-ai
+    stdin_open: true
+    tty: false
+    restart: "no"
+    profiles: ["mcp"]
+
+  # ─────────────────────────── Ollama (Local LLM) ──────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    profiles: ["ollama"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────── Standalone Chroma DB ────────────────────────
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+    profiles: ["chroma"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────── Test Runner ─────────────────────────────────
+  tester:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: k8s-ai-tester
+    working_dir: /app
+    command: ["poetry", "run", "pytest", "tests/", "-v", "--tb=short"]
+    environment:
+      - OPENAI_API_KEY=sk-test-key-for-unit-tests
+      - K8S_AI_PROVIDER=openai
+    volumes:
+      - .:/app
+      - k8s-ai-cache:/root/.cache/k8s-ai
+    profiles: ["test"]
+
+volumes:
+  k8s-ai-cache:
+    driver: local
+  ollama-models:
+    driver: local
+  chroma-data:
+    driver: local
+
+networks:
+  default:
+    name: k8s-ai-network

@@ -1,0 +1,140 @@
+# Default values for k8s-ai-support Helm chart
+
+replicaCount: 1
+
+image:
+  repository: k8s-ai-support
+  pullPolicy: IfNotPresent
+  tag: "1.0.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# LLM Provider configuration
+llm:
+  provider: openai   # openai | gemini | claude | ollama
+  model: gpt-4o-mini
+  temperature: "0.1"
+  tokenBudget: "8000"
+  ollamaUrl: "http://localhost:11434"
+
+# API keys — use secretRef for security
+apiKeys:
+  # Either set values directly (not recommended for production)
+  openaiApiKey: ""
+  geminiApiKey: ""
+  anthropicApiKey: ""
+
+  # OR reference existing secrets (recommended)
+  existingSecret: ""       # Name of existing Secret
+  openaiApiKeyKey: "OPENAI_API_KEY"
+  geminiApiKeyKey: "GEMINI_API_KEY"
+  anthropicApiKeyKey: "ANTHROPIC_API_KEY"
+
+# Kubernetes configuration
+kubernetes:
+  defaultNamespace: default
+  kubectlTimeout: "10"
+
+# Logging
+logging:
+  level: INFO
+  format: json
+
+# MCP Server
+mcp:
+  enabled: false
+  rateLimit: "10"
+
+# Service (only relevant if exposing MCP server over HTTP proxy)
+service:
+  type: ClusterIP
+  port: 8080
+
+# ServiceAccount (needs read access to all namespaces)
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC (required for cluster read access)
+rbac:
+  create: true
+
+# ClusterRole rules — READ ONLY
+clusterRole:
+  rules:
+    - apiGroups: [""]
+      resources:
+        - pods
+        - pods/log
+        - services
+        - endpoints
+        - nodes
+        - namespaces
+        - events
+        - configmaps
+        - persistentvolumes
+        - persistentvolumeclaims
+        - replicationcontrollers
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources:
+        - deployments
+        - replicasets
+        - statefulsets
+        - daemonsets
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["batch"]
+      resources:
+        - jobs
+        - cronjobs
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources:
+        - ingresses
+        - networkpolicies
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["autoscaling"]
+      resources:
+        - horizontalpodautoscalers
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["metrics.k8s.io"]
+      resources:
+        - pods
+        - nodes
+      verbs: ["get", "list"]
+
+# Pod configuration
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false  # Needs write for cache
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# Persistence for embeddings cache
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 2Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
