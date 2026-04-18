@@ -286,6 +286,12 @@ def check():
 
 def main():
     """Entry point for the CLI."""
+    # Allow shorthand: kas "query ..." instead of kas diagnose "query ..."
+    # If the first positional arg is not a known subcommand, inject 'diagnose'.
+    _known = {"diagnose", "mcp", "version", "check"}
+    args = sys.argv[1:]
+    if args and not args[0].startswith("-") and args[0] not in _known:
+        sys.argv.insert(1, "diagnose")
     app()
 
 

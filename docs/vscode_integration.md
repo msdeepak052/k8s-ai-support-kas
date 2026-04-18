@@ -6,7 +6,12 @@ This guide shows how to connect `k8s-ai-support` as an MCP server to your IDE.
 
 ## Prerequisites
 
-- `k8s-ai-support` installed: `pip install k8s-ai-support[all]`
+- `kas` / `k8s-ai-support` installed globally:
+  ```bash
+  git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
+  cd k8s-ai-support-kas
+  bash install.sh   # uses uv if available, Python venv fallback
+  ```
 - At least one API key set in your environment
 - `kubectl` configured with access to your cluster
 
@@ -165,7 +170,7 @@ Use k8s_get_logs to fetch logs from pod "backend-xyz" including previous contain
 ### Server not starting
 ```bash
 # Test the MCP server directly
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"test"},"protocolVersion":"2024-11-05"}}' | k8s-ai-support mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"test"},"protocolVersion":"2024-11-05"}}' | kas mcp
 ```
 
 Expected output:

@@ -135,24 +135,33 @@ ip-192-168-68-190.ap-south-1.compute.internal   Ready    <none>   6m58s   v1.34.
 
 ---
 
+## Install kas (if not already installed)
+
+```bash
+# Clone the repo and run the universal installer
+git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
+cd k8s-ai-support-kas
+bash install.sh          # uses uv if available, venv fallback otherwise
+
+# After a git pull — reinstall to pick up changes
+bash install.sh --update
+```
+
 ## Run kas Against the Cluster
 
 ```bash
-# Set your LLM key
-export K8S_AI_OPENAI_API_KEY=sk-...        # OpenAI
-# or
-export K8S_AI_GOOGLE_API_KEY=AIza...       # Gemini
-# or
-export K8S_AI_ANTHROPIC_API_KEY=sk-ant-... # Claude
+# Set your LLM key (pick one)
+export OPENAI_API_KEY=sk-...
+export GEMINI_API_KEY=AIza...
+export ANTHROPIC_API_KEY=sk-ant-...
 
-# Basic diagnosis
+# Basic diagnosis — query always comes first, flags after
 kas "why are pods crashing in default namespace?"
 
 # Target a specific resource
 kas "failing-deployment not ready" -n kas-test -r failing-deployment -t deployment
 
 # Apply test scenarios against this cluster
-kubectl apply -f test-scenarios/00-namespace.yaml
 bash test-scenarios/apply-all.sh
 
 # Then diagnose each failure

@@ -26,41 +26,52 @@ All the ways to run `k8s-ai-support`, from a quick local test to a full producti
 ### Required on your machine
 
 ```bash
-# Python 3.11+
-python --version
-
-# uv (recommended package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
 # kubectl
 curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-
-# Verify
 kubectl version --client
+
+# Python 3.11–3.13 (Python 3.14 is NOT supported — some packages lack 3.14 wheels)
+# Skip this if you plan to use uv — uv manages Python automatically
+python3 --version
 ```
 
-### Clone and install globally
+### Clone and install
 
 ```bash
 git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
-cd k8s-ai-support
+cd k8s-ai-support-kas
 
-# One-time global install — registers kas and k8s-ai-support as system commands
-uv tool install --editable ".[all]"
+# Universal installer — auto-detects uv, Python venv, or prints install help
+bash install.sh
 ```
 
-After this you never need `uv run` again. Both commands work from anywhere:
+The installer picks the best available method:
+
+| Runtime | What it does |
+|---------|-------------|
+| `uv` present | `uv tool install --python 3.12` — `kas` registered globally |
+| Only Python 3.11–3.13 | pip editable install in `.venv`, wrapper at `~/.local/bin/kas` |
+| Neither | Prints install instructions for uv and Python, exits cleanly |
+
+After install, both commands work from anywhere — no `uv run` prefix needed:
 
 ```bash
-kas "why is my pod crashing?"          # short alias
-k8s-ai-support "why is my pod crashing?"  # full name — same thing
+kas "why is my pod crashing?"            # short alias
+k8s-ai-support "why is my pod crashing?" # full name — same thing
 ```
 
-To update after pulling new code:
+To pick up code changes after `git pull`:
 
 ```bash
-uv tool upgrade k8s-ai-support
+git pull
+bash install.sh --update
+```
+
+To uninstall:
+
+```bash
+bash install.sh --uninstall
 ```
 
 ### API Key (at least one)
@@ -149,9 +160,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"nam
 {
   "mcp.servers": {
     "k8s-ai": {
-      "command": "uv",
-      "args": ["run", "k8s-ai-support", "mcp"],
-      "cwd": "/path/to/k8s-ai-support",
+      "command": "kas",
+      "args": ["mcp"],
       "env": {
         "OPENAI_API_KEY": "${env:OPENAI_API_KEY}",
         "K8S_AI_PROVIDER": "openai",
@@ -168,9 +178,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"nam
 {
   "mcpServers": {
     "k8s-ai": {
-      "command": "uv",
-      "args": ["run", "k8s-ai-support", "mcp"],
-      "cwd": "/path/to/k8s-ai-support",
+      "command": "kas",
+      "args": ["mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "K8S_AI_PROVIDER": "openai",
@@ -190,9 +199,8 @@ Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 {
   "mcpServers": {
     "k8s-ai": {
-      "command": "uv",
-      "args": ["run", "k8s-ai-support", "mcp"],
-      "cwd": "/path/to/k8s-ai-support",
+      "command": "kas",
+      "args": ["mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "K8S_AI_PROVIDER": "openai"
@@ -233,7 +241,7 @@ docker run --rm \
   -e K8S_AI_MODEL=gpt-4o-mini \
   -v ~/.kube:/home/k8sai/.kube:ro \
   k8s-ai-support:latest \
-  diagnose "why is my nginx pod crashing?" -n production
+  "why is my nginx pod crashing?" -n production
 ```
 
 ### Run MCP server (IDE integration via Docker)
@@ -326,7 +334,11 @@ kas "why is pending-pod stuck?" \
 kas "imagepull-pod failing to start" \
   -n k8s-ai-test -r imagepull-pod
 
-# Run all tests against the kind cluster
+# Or use the full test-scenarios suite (more complete)
+bash test-scenarios/apply-all.sh
+kas "why is crash-loop-pod crashing?" -n kas-test
+
+# Run unit tests (no cluster needed)
 uv run pytest tests/ -v
 ```
 

@@ -30,45 +30,49 @@ Agent: Fetches kubectl describe + logs → summarizes (842 tokens, 95% reduction
 
 ### 1. Install
 
-**Using uv — installs `k8s-ai-support` and `kas` globally (recommended)**
+**One-liner — works with or without uv**
 
 ```bash
-# Install uv if you don't have it
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Clone the repo
-git clone https://github.com/your-org/k8s-ai-support
-cd k8s-ai-support
-
-# One-time global install — registers kas and k8s-ai-support as system commands
-uv tool install --editable ".[all]"
+git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
+cd k8s-ai-support-kas
+bash install.sh
 ```
 
-After this, both commands work directly from anywhere — no `uv run` prefix needed:
+The script auto-detects your environment:
+
+| Situation | What the script does |
+|-----------|---------------------|
+| `uv` installed | Uses `uv tool install` — `kas` registered globally, Python 3.12 managed automatically |
+| `uv` missing, Python 3.11–3.13 found | Creates `.venv`, installs deps, creates `~/.local/bin/kas` wrapper |
+| Neither found | Prints instructions to install uv or Python, then exits cleanly |
+
+After install, both commands work from anywhere — no `uv run` prefix needed:
 
 ```bash
 kas "why is my nginx pod crashing?"
 k8s-ai-support "why is my nginx pod crashing?"
 ```
 
-To update later:
+**After a `git pull` — pick up code changes:**
 
 ```bash
-uv tool upgrade k8s-ai-support
+bash install.sh --update
 ```
 
-**Using pip**
+**Uninstall:**
 
 ```bash
-pip install "k8s-ai-support[all]"
-# Then use kas or k8s-ai-support directly
+bash install.sh --uninstall
 ```
 
-**Using Poetry**
+**Manual install (uv, if you prefer)**
 
 ```bash
-poetry install --extras "all"
-poetry run kas "..."     # within the poetry env
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Then
+uv tool install --python 3.12 --editable ".[all]"
 ```
 
 ### 2. Configure
@@ -88,20 +92,25 @@ export K8S_AI_MODEL=gpt-4o-mini
 
 `kas` and `k8s-ai-support` are identical — use whichever you prefer.
 
+> **Query must come first**, before any flags. `kas "query" -n namespace` is correct; `kas -n namespace "query"` will not route correctly.
+
 ```bash
-# Single query
+# Single query — natural language, query always first
 kas "why is my nginx pod crashing?"
 
 # With namespace and resource
 kas "pod failing" -n production -r nginx-pod-abc123 -t pod
 
-# Interactive mode
+# Explicit subcommand also works
+kas diagnose "deployment not ready" -n production -t deployment
+
+# Interactive REPL mode
 kas --interactive
 
 # JSON output
-kas "deployment not scaling" -o json
+kas "deployment not scaling" -n production -o json
 
-# Check configuration
+# Check cluster connectivity and LLM config
 kas check
 
 # Start MCP server (for IDE integration)
@@ -255,20 +264,22 @@ Estimated resolution: quick (< 5 min)
 
 ## Development
 
-**With uv (recommended)**
-
 ```bash
-# Clone and install globally (kas and k8s-ai-support available immediately)
-git clone https://github.com/your-org/k8s-ai-support
-cd k8s-ai-support
-uv tool install --editable ".[all]"
+# Clone and install (uses uv if available, venv fallback otherwise)
+git clone https://github.com/msdeepak052/k8s-ai-support-kas.git
+cd k8s-ai-support-kas
+bash install.sh
+
+# After any code change — editable install means changes are live immediately
+# After a git pull — reinstall to pick up dependency changes
+bash install.sh --update
 
 # Run tests (unit tests, no cluster needed)
 uv run pytest tests/ -v
 
 # Run with kind cluster (integration tests)
 kind create cluster --config tests/fixtures/kind_cluster.yaml
-kubectl apply -f tests/fixtures/kind_cluster.yaml
+bash test-scenarios/apply-all.sh
 uv run pytest tests/ -v -m integration
 
 # Lint and format
@@ -278,18 +289,6 @@ uv run mypy src/
 
 # Build Docker image
 docker build -t k8s-ai-support:dev .
-```
-
-**With Poetry**
-
-```bash
-git clone https://github.com/your-org/k8s-ai-support
-cd k8s-ai-support
-poetry install --extras "all"
-
-poetry run pytest tests/ -v
-poetry run ruff check src/
-poetry run black src/ tests/
 ```
 
 ---
@@ -305,7 +304,7 @@ docker run --rm \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
   -v ~/.kube:/home/k8sai/.kube:ro \
   k8s-ai-support:latest \
-  diagnose "why is my nginx pod crashing?"
+  "why is my nginx pod crashing?"
 
 # Run MCP server
 docker run --rm -i \
@@ -358,21 +357,43 @@ helm install k8s-ai-support helm/k8s-ai-support/ \
 
 ## Troubleshooting
 
-**No cluster access:**
+**`kas` command not found after install:**
+```bash
+# Check if ~/.local/bin is in PATH
+echo $PATH | grep -q "$HOME/.local/bin" || echo "Add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\""
+source ~/.bashrc   # then reload
+kas version
 ```
-k8s-ai-support check
-# If cluster unreachable, agent uses RAG-only mode with K8s documentation
+
+**Changes in a new clone not reflected:**
+```bash
+# The old kas still points to the previous clone directory.
+# Run install from inside the new clone to update the pointer.
+cd /path/to/new/clone
+bash install.sh --update
+```
+
+**Python 3.14 errors (packages fail to build):**
+```bash
+# Python 3.14 is not supported — use 3.12 explicitly
+uv tool uninstall k8s-ai-support
+uv tool install --python 3.12 --editable ".[all]"
+```
+
+**No cluster access:**
+```bash
+kas check
+# If cluster unreachable, agent falls back to RAG-only mode using K8s documentation
 ```
 
 **Missing API key:**
 ```bash
-# Check which keys are available
 env | grep -E "(OPENAI|GEMINI|ANTHROPIC)_API_KEY"
-# Agent auto-detects available provider
+# Agent auto-detects whichever key is set
 ```
 
 **Slow first run:**
-The first run downloads the embedding model (~130MB for BAAI/bge-small-en-v1.5).
+The first run downloads the embedding model (~130 MB for BAAI/bge-small-en-v1.5).
 Subsequent runs use the cached model from `~/.cache/k8s-ai/`.
 
 **High token usage:**

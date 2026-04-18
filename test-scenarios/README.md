@@ -22,6 +22,34 @@ All resources live in the **`kas-test`** namespace (created by `00-namespace.yam
 
 ---
 
+## Command syntax
+
+`kas` accepts a natural-language query as the first argument, followed by optional flags.
+**The query must always come first — before any flags.**
+
+```bash
+# Correct — query first, flags after
+kas "why is crash-loop-pod crashing?" -n kas-test
+kas "oom-pod keeps restarting" -n kas-test -r oom-pod -t pod
+
+# Also valid — explicit subcommand
+kas diagnose "why is crash-loop-pod crashing?" -n kas-test
+
+# Wrong — flags before query won't be routed correctly
+kas -n kas-test "why is crash-loop-pod crashing?"
+```
+
+Other built-in commands (no query needed):
+
+```bash
+kas version          # show version + provider info
+kas check            # verify cluster connectivity and LLM config
+kas mcp              # start MCP server for IDE integration
+kas --help           # show all commands and options
+```
+
+---
+
 ## Scenarios
 
 ### 00 — Namespace
