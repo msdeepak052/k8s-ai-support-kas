@@ -15,21 +15,29 @@ RULES:
 4. Use EXACT values from the data in analysis and root_cause (limits, image names, error text, exit codes)
 5. Confidence: 0.9+ when data proves the cause; 0.6–0.9 = likely; <0.6 = uncertain
 
-DATA ALREADY COLLECTED — do NOT suggest commands to re-fetch:
-  • Pod spec: resource requests/limits, container statuses, exit codes, restart counts
-  • Current and previous container logs
-  • Kubernetes events
-  • Live metrics (present as actual values, or "unavailable" with reason)
+DATA ALREADY COLLECTED — do NOT suggest commands to re-fetch any of this:
+  • pod_summaries[].resource_requests and resource_limits — exact values in the JSON
+  • pod_summaries[].owner_references — actual owner (Deployment, StatefulSet, Job, etc.); if empty, pod is standalone
+  • pod_summaries[].container_statuses[].command and args — what the container actually runs
+    (e.g., args: ["--vm-bytes","100M"] tells you the container intentionally requests 100 MB of memory)
+  • pod_summaries[].container_statuses — state, exit_code, restart_count, last_termination_reason
+  • pod_summaries[].container_statuses[].last_termination_log_snippet — previous crash log tail;
+    null means the container exited before the container runtime flushed its log buffer (common for OOMKill)
+  • events[] — already sorted and summarized
+  • live_pod_metrics / live_node_metrics — present as actual values or "unavailable" with reason
   • Deployment, node, service, PVC data as applicable
 
-ANALYSIS must explicitly state:
-  • Resource requests and limits (e.g., "requests: none | limits: memory=30Mi")
-  • The actual error, exit code, or failure reason from the data
-  • Live metrics value if present; if "unavailable because pod is crashing", say so — do not imply metrics-server is missing
+ANALYSIS must state:
+  • Resource requests and limits with exact values (e.g., "requests: cpu=10m memory=10Mi | limits: cpu=100m memory=30Mi")
+  • Container command/args if present — they often directly explain the issue (e.g., --vm-bytes exceeds limit)
+  • The actual error, exit code, last_termination_reason from container_statuses
+  • Owner reference — use it to name the affected resource accurately; do NOT infer owner from labels
+  • live_pod_metrics: state value or explain why unavailable
 
-SUGGESTIONS: generate 2–4 focused suggestions derived strictly from the evidence.
-  • Do NOT add ConfigMap, Secret, network policy, or any other check unless the data explicitly shows
-    it is missing or misconfigured for this pod
+SUGGESTIONS: generate 2–4 focused suggestions based strictly on the evidence in the data.
+  • Never add generic checks (ConfigMaps, Secrets, network policies, VPA, memory leak review, etc.) unless
+    the data explicitly shows that resource is missing or misconfigured for this specific pod
+  • Every suggestion must include at least one kubectl command — if you cannot provide a command, omit the suggestion
   • The final suggestion must be a post-fix verification step
 
 additional_checks: non-command guidance only (e.g., "contact app team").
@@ -75,10 +83,12 @@ def build_analysis_prompt(context_json: Dict[str, Any], rag_context: Optional[st
     ctx_for_prompt = {k: v for k, v in context_json.items() if k not in ("rag_context", "query")}
     parts.append(json.dumps(ctx_for_prompt, indent=2, default=str))
 
-    # RAG documentation
+    # RAG documentation — framed explicitly so LLM treats it as background, not as a command list
     if rag_context:
         parts.append("")
-        parts.append("=== KUBERNETES DOCUMENTATION CONTEXT ===")
+        parts.append("=== KUBERNETES DOCUMENTATION (background reference only) ===")
+        parts.append("NOTE: The 'Diagnostic commands' listed in the docs below were already executed to")
+        parts.append("collect the cluster data above. Do NOT copy them into your suggestions.")
         parts.append(rag_context)
 
     parts.append("")

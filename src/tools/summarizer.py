@@ -37,6 +37,8 @@ class ContainerStatus(BaseModel):
     last_termination_exit_code: Optional[int] = None
     last_termination_log_snippet: Optional[str] = None
     image: Optional[str] = None
+    command: Optional[List[str]] = None   # entrypoint override from pod spec
+    args: Optional[List[str]] = None      # args from pod spec (e.g. --vm-bytes 100M)
 
 
 class PodSummary(BaseModel):
@@ -47,6 +49,7 @@ class PodSummary(BaseModel):
     node: Optional[str] = None
     pod_ip: Optional[str] = None
     host_ip: Optional[str] = None
+    owner_references: List[Dict[str, str]] = Field(default_factory=list)  # [{kind, name}]
     conditions: List[Dict[str, str]] = Field(default_factory=list)
     container_statuses: List[ContainerStatus] = Field(default_factory=list)
     events: List[Dict[str, Any]] = Field(default_factory=list)
@@ -155,11 +158,26 @@ class ResourceSummarizer:
         self.max_log_lines = max_log_lines
         self.token_budget = token_budget
 
+    # kubectl sometimes writes this to stdout (rc=0) when the container log file is missing
+    _LOG_RETRIEVAL_ERROR = "unable to retrieve container logs"
+
     def summarize_pod(self, pod_json: Dict[str, Any], log_text: Optional[str] = None, prev_log_text: Optional[str] = None) -> PodSummary:
         """Extract essential fields from full pod JSON."""
         meta = pod_json.get("metadata", {})
         spec = pod_json.get("spec", {})
         status = pod_json.get("status", {})
+
+        # Filter out kubectl's "unable to retrieve container logs" error written to stdout
+        if log_text and self._LOG_RETRIEVAL_ERROR in log_text:
+            log_text = None
+        if prev_log_text and self._LOG_RETRIEVAL_ERROR in prev_log_text:
+            prev_log_text = None
+
+        # Owner references — tells LLM which Deployment/StatefulSet/Job owns this pod
+        owner_references = [
+            {"kind": r.get("kind", ""), "name": r.get("name", "")}
+            for r in meta.get("ownerReferences", [])
+        ]
 
         # Container statuses
         container_statuses = []
@@ -184,7 +202,7 @@ class ResourceSummarizer:
             lt_reason = lt.get("reason")
             lt_exit = lt.get("exitCode")
 
-            # Log snippet from previous crash
+            # Log snippet — prefer previous crash logs, fall back to current if terminated
             log_snippet = None
             if prev_log_text:
                 lines = prev_log_text.strip().split("\n")
@@ -193,7 +211,7 @@ class ResourceSummarizer:
                 lines = log_text.strip().split("\n")
                 log_snippet = "\n".join(lines[-self.max_log_lines:])
 
-            # Resource requests/limits from spec
+            # Container spec: command, args, image
             container_spec = next(
                 (c for c in spec.get("containers", []) if c.get("name") == cs.get("name")), {}
             )
@@ -209,6 +227,8 @@ class ResourceSummarizer:
                 last_termination_exit_code=lt_exit,
                 last_termination_log_snippet=log_snippet,
                 image=cs.get("image"),
+                command=container_spec.get("command") or None,
+                args=container_spec.get("args") or None,
             ))
 
         # Conditions (only non-True or problematic)
@@ -219,7 +239,7 @@ class ResourceSummarizer:
                     "type": cond.get("type", ""),
                     "status": cond.get("status", ""),
                     "reason": cond.get("reason", ""),
-                    "message": cond.get("message", "")[:200],  # truncate
+                    "message": cond.get("message", "")[:200],
                 })
 
         # Resource requests/limits (aggregate across containers)
@@ -244,6 +264,7 @@ class ResourceSummarizer:
             node=spec.get("nodeName"),
             pod_ip=status.get("podIP"),
             host_ip=status.get("hostIP"),
+            owner_references=owner_references,
             conditions=conditions,
             container_statuses=container_statuses,
             resource_requests=total_requests or None,

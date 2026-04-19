@@ -749,6 +749,10 @@ async def suggest_commands_node(state: AgentState) -> AgentState:
             else:
                 logger.warning("Stripped unsafe command from suggestions: %s | %s", cmd, reason)
         sugg["commands"] = safe_commands
+        # Drop suggestions with no commands — vague advice without a command belongs in additional_checks
+        if not safe_commands:
+            logger.debug("Dropped no-command suggestion: %s", sugg.get("description", "")[:100])
+            continue
         filtered_suggestions.append(sugg)
 
     diagnosis["suggestions"] = filtered_suggestions
