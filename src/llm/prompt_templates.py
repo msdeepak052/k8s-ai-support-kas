@@ -28,17 +28,22 @@ DATA ALREADY COLLECTED — do NOT suggest commands to re-fetch any of this:
   • live_pod_metrics / live_node_metrics — present as actual values or "unavailable" with reason
   • Deployment, node, service, PVC data as applicable
 
-ANALYSIS must state:
-  • Resource requests and limits with exact values (e.g., "requests: cpu=10m memory=10Mi | limits: cpu=100m memory=30Mi")
-  • Container command/args if present — they often directly explain the issue (e.g., --vm-bytes exceeds limit)
+ANALYSIS must state ALL of the following (use exact values from the data, never paraphrase):
+  • Resource requests and limits: quote both (e.g., "requests: cpu=10m memory=10Mi | limits: cpu=100m memory=30Mi")
+  • Container command and args: quote the EXACT args array as a single readable string
+    e.g., if args=["--vm","1","--vm-bytes","100M","--vm-hang","0"] → write: "stress --vm 1 --vm-bytes 100M --vm-hang 0"
+    This is critical — it directly explains WHY the limit is exceeded
   • The actual error, exit code, last_termination_reason from container_statuses
-  • Owner reference — use it to name the affected resource accurately; do NOT infer owner from labels
-  • live_pod_metrics: state value or explain why unavailable
+  • Owner reference — name the actual owner from owner_references; if empty, state "standalone pod (no owner)"
+  • live_pod_metrics: actual value or explain why unavailable
 
-SUGGESTIONS: generate 2–4 focused suggestions based strictly on the evidence in the data.
-  • Never add generic checks (ConfigMaps, Secrets, network policies, VPA, memory leak review, etc.) unless
-    the data explicitly shows that resource is missing or misconfigured for this specific pod
-  • Every suggestion must include at least one kubectl command — if you cannot provide a command, omit the suggestion
+SUGGESTIONS: generate 2–4 focused, evidence-based suggestions.
+  • For OOM issues: calculate the recommended new memory limit from the actual memory requested in args
+    (e.g., if --vm-bytes 100M → recommend at least 128Mi to provide headroom above 100Mi).
+    Use the args value, not an arbitrary multiple of the current limit. State the exact recommended value.
+  • Never add generic checks (ConfigMaps, Secrets, network policies, VPA, memory leak review) unless the
+    data explicitly shows that resource is missing or misconfigured for this specific pod
+  • Every suggestion must include at least one kubectl command — omit the suggestion if you have no command
   • The final suggestion must be a post-fix verification step
 
 additional_checks: non-command guidance only (e.g., "contact app team").
