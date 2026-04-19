@@ -308,12 +308,23 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     raw_top_pod_output: Optional[str] = None
     raw_top_nodes_output: Optional[str] = None
 
+    # Keys that are best-effort — silently skip on failure (metrics-server may not be installed,
+    # pod may be mid-restart, or cluster may not have the metrics API enabled).
+    _OPTIONAL_KEYS = {"top_pod", "top_nodes"}
+
     for key, result in result_map.items():
         if isinstance(result, Exception):
-            errors.append(f"Failed to fetch {key}: {result}")
+            if key in _OPTIONAL_KEYS:
+                logger.debug("[FETCH] %s unavailable (exception): %s", key, result)
+            else:
+                errors.append(f"Failed to fetch {key}: {result}")
             continue
         if not result.success:
-            if result.is_not_found:
+            if key in _OPTIONAL_KEYS:
+                logger.debug("[FETCH] %s unavailable (rc=%s): %s",
+                             key, result.return_code,
+                             (result.stderr or result.error_message or "")[:120])
+            elif result.is_not_found:
                 warnings.append(f"Resource not found: {key}")
             elif result.is_timeout:
                 warnings.append(f"kubectl timeout for {key}")

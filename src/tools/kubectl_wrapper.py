@@ -234,7 +234,7 @@ class KubectlWrapper:
     async def top_pod(self, pod_name: str, namespace: str = "default") -> KubectlResult:
         """Get current CPU/memory usage for a specific pod."""
         logger.debug("[KUBECTL-TOP] pod=%s, ns=%s", pod_name, namespace)
-        result = await self._run("top", ["pod", pod_name], namespace=namespace, output_json=False)
+        result = await self._run("top", ["pods", pod_name], namespace=namespace, output_json=False)
         logger.debug("[KUBECTL-TOP] pod=%s → success=%s  %s",
                      pod_name, result.success, result.stdout.strip()[:80])
         return result
