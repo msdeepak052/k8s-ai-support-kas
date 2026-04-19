@@ -316,6 +316,10 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
         if isinstance(result, Exception):
             if key in _OPTIONAL_KEYS:
                 logger.debug("[FETCH] %s unavailable (exception): %s", key, result)
+                if key == "top_pod":
+                    raw_top_pod_output = "unavailable"
+                elif key == "top_nodes":
+                    raw_top_nodes_output = "unavailable"
             else:
                 errors.append(f"Failed to fetch {key}: {result}")
             continue
@@ -324,6 +328,11 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
                 logger.debug("[FETCH] %s unavailable (rc=%s): %s",
                              key, result.return_code,
                              (result.stderr or result.error_message or "")[:120])
+                # Mark as attempted-but-unavailable so the LLM knows to acknowledge it
+                if key == "top_pod":
+                    raw_top_pod_output = "unavailable"
+                elif key == "top_nodes":
+                    raw_top_nodes_output = "unavailable"
             elif result.is_not_found:
                 warnings.append(f"Resource not found: {key}")
             elif result.is_timeout:

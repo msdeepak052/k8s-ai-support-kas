@@ -442,21 +442,28 @@ class ResourceSummarizer:
         #   NAME      CPU(cores)   MEMORY(bytes)
         #   oom-pod   1m           45Mi
         # Becomes: "cpu=1m  memory=45Mi"
+        # When the command was attempted but failed: "unavailable (metrics-server not installed)"
         if top_pod_output:
-            lines = [l for l in top_pod_output.strip().splitlines() if l.strip()]
-            if len(lines) >= 2:
-                parts = lines[1].split()   # [name, cpu, memory]
-                if len(parts) >= 3:
-                    ctx.live_pod_metrics = f"cpu={parts[1]}  memory={parts[2]}"
-                else:
-                    ctx.live_pod_metrics = lines[1].strip()
-            elif lines:
-                ctx.live_pod_metrics = lines[0].strip()
+            if top_pod_output.strip().lower() == "unavailable":
+                ctx.live_pod_metrics = "unavailable (metrics-server not installed — cannot show live usage)"
+            else:
+                lines = [l for l in top_pod_output.strip().splitlines() if l.strip()]
+                if len(lines) >= 2:
+                    parts = lines[1].split()   # [name, cpu, memory]
+                    if len(parts) >= 3:
+                        ctx.live_pod_metrics = f"cpu={parts[1]}  memory={parts[2]}"
+                    else:
+                        ctx.live_pod_metrics = lines[1].strip()
+                elif lines:
+                    ctx.live_pod_metrics = lines[0].strip()
             logger.debug("live_pod_metrics: %s", ctx.live_pod_metrics)
 
         # Include full top-nodes output (compact table, useful for node-pressure context)
         if top_nodes_output:
-            ctx.live_node_metrics = top_nodes_output.strip()[:400]
+            if top_nodes_output.strip().lower() == "unavailable":
+                ctx.live_node_metrics = "unavailable (metrics-server not installed)"
+            else:
+                ctx.live_node_metrics = top_nodes_output.strip()[:400]
 
         if pod_data:
             for item in pod_data:
