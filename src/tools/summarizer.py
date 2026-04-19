@@ -133,6 +133,9 @@ class StructuredContext(BaseModel):
     pvc_summaries: List[PVCSummary] = Field(default_factory=list)
     events: List[EventSummary] = Field(default_factory=list)
     raw_log_snippet: Optional[str] = None
+    # Live resource metrics from "kubectl top" — actual current usage vs limits
+    live_pod_metrics: Optional[str] = None    # e.g. "cpu=1m, memory=45Mi"
+    live_node_metrics: Optional[str] = None   # full kubectl top nodes output
     rag_context: Optional[str] = None
     token_count: int = 0
     warnings: List[str] = Field(default_factory=list)
@@ -421,6 +424,8 @@ class ResourceSummarizer:
         rag_context: Optional[str] = None,
         cluster_reachable: bool = True,
         warnings: Optional[List[str]] = None,
+        top_pod_output: Optional[str] = None,
+        top_nodes_output: Optional[str] = None,
     ) -> StructuredContext:
         """Build the complete structured context for the LLM."""
 
@@ -431,6 +436,27 @@ class ResourceSummarizer:
             rag_context=rag_context,
             warnings=warnings or [],
         )
+
+        # Parse "kubectl top pod <name>" output into a compact metrics string.
+        # Raw format:
+        #   NAME      CPU(cores)   MEMORY(bytes)
+        #   oom-pod   1m           45Mi
+        # Becomes: "cpu=1m  memory=45Mi"
+        if top_pod_output:
+            lines = [l for l in top_pod_output.strip().splitlines() if l.strip()]
+            if len(lines) >= 2:
+                parts = lines[1].split()   # [name, cpu, memory]
+                if len(parts) >= 3:
+                    ctx.live_pod_metrics = f"cpu={parts[1]}  memory={parts[2]}"
+                else:
+                    ctx.live_pod_metrics = lines[1].strip()
+            elif lines:
+                ctx.live_pod_metrics = lines[0].strip()
+            logger.debug("live_pod_metrics: %s", ctx.live_pod_metrics)
+
+        # Include full top-nodes output (compact table, useful for node-pressure context)
+        if top_nodes_output:
+            ctx.live_node_metrics = top_nodes_output.strip()[:400]
 
         if pod_data:
             for item in pod_data:

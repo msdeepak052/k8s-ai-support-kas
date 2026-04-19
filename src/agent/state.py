@@ -32,6 +32,8 @@ class AgentState(TypedDict, total=False):
     raw_events_json: Optional[Dict[str, Any]]
     raw_logs: Optional[Dict[str, str]]          # pod_name -> log_text
     raw_prev_logs: Optional[Dict[str, str]]     # pod_name -> previous log text
+    raw_top_pod_output: Optional[str]           # stdout of "kubectl top pod <name>"
+    raw_top_nodes_output: Optional[str]         # stdout of "kubectl top nodes"
 
     # Summarized context
     structured_context: Optional[Dict[str, Any]]

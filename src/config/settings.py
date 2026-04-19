@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     default_namespace: str = Field(default="default", description="Default Kubernetes namespace")
 
     # Logging
-    log_level: LogLevel = Field(default=LogLevel.INFO, description="Log level")
+    # Default is WARNING — normal CLI runs are silent (use --verbose for INFO, --debug for DEBUG)
+    log_level: LogLevel = Field(default=LogLevel.WARNING, description="Log level")
     log_format: str = Field(default="json", description="Log format: json or text")
 
     # MCP Server

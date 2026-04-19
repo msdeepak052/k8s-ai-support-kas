@@ -228,8 +228,16 @@ class KubectlWrapper:
         return await self._run("get", ["nodes"], namespace=None)
 
     async def top_pods(self, namespace: str = "default") -> KubectlResult:
-        """Get pod resource usage."""
+        """Get resource usage for all pods in a namespace."""
         return await self._run("top", ["pods"], namespace=namespace, output_json=False)
+
+    async def top_pod(self, pod_name: str, namespace: str = "default") -> KubectlResult:
+        """Get current CPU/memory usage for a specific pod."""
+        logger.debug("[KUBECTL-TOP] pod=%s, ns=%s", pod_name, namespace)
+        result = await self._run("top", ["pod", pod_name], namespace=namespace, output_json=False)
+        logger.debug("[KUBECTL-TOP] pod=%s → success=%s  %s",
+                     pod_name, result.success, result.stdout.strip()[:80])
+        return result
 
     async def top_nodes(self) -> KubectlResult:
         """Get node resource usage."""

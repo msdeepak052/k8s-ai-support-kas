@@ -192,13 +192,22 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     }
 
     # --- Fetch specific resource type ---
-    if resource_type in ("pod", "pods") or any(kw in query for kw in ["pod", "crash", "log", "container"]):
+    _is_pod_context = (
+        resource_type in ("pod", "pods")
+        or any(kw in query for kw in ["pod", "crash", "log", "container", "oom", "memory", "restart"])
+    )
+    if _is_pod_context:
         if resource_name:
             fetch_tasks["pods"] = kubectl.get_resource("pods", resource_name, namespace)
             fetch_tasks["logs"] = kubectl.get_logs(resource_name, namespace, tail=100)
             fetch_tasks["prev_logs"] = kubectl.get_logs(resource_name, namespace, tail=50, previous=True)
+            # Live resource metrics — tells LLM actual usage vs limits right now
+            fetch_tasks["top_pod"] = kubectl.top_pod(resource_name, namespace)
         else:
             fetch_tasks["pods"] = kubectl.get_pods(namespace)
+
+    # Always fetch node metrics when cluster data is needed — useful for OOM / scheduling issues
+    fetch_tasks["top_nodes"] = kubectl.top_nodes()
 
     if resource_type in ("deployment", "deploy") or "deploy" in query:
         if resource_name:
@@ -296,6 +305,8 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     raw_pvc_data = []
     raw_logs = {}
     raw_prev_logs = {}
+    raw_top_pod_output: Optional[str] = None
+    raw_top_nodes_output: Optional[str] = None
 
     for key, result in result_map.items():
         if isinstance(result, Exception):
@@ -359,6 +370,14 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
             pod_name = key[6:]
             raw_prev_logs[pod_name] = result.stdout
 
+        elif key == "top_pod":
+            raw_top_pod_output = result.stdout.strip()
+            logger.debug("[FETCH] top_pod output: %s", raw_top_pod_output[:120])
+
+        elif key == "top_nodes":
+            raw_top_nodes_output = result.stdout.strip()
+            logger.debug("[FETCH] top_nodes output: %s", raw_top_nodes_output[:200])
+
         elif key == "events":
             pass  # Handled below
 
@@ -375,6 +394,8 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     logger.debug("[FETCH] raw_prev_logs keys: %s", list(raw_prev_logs.keys()))
     for _pod, _txt in raw_prev_logs.items():
         logger.debug("[FETCH] prev_log[%s] = %d chars", _pod, len(_txt or ""))
+    logger.debug("[FETCH] top_pod=%s, top_nodes=%s",
+                 bool(raw_top_pod_output), bool(raw_top_nodes_output))
 
     logger.info(
         "Fetched: %d pods, %d deployments, %d nodes, %d services, %d pvcs",
@@ -394,6 +415,8 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
         "raw_events_json": raw_events_json,
         "raw_logs": raw_logs,
         "raw_prev_logs": raw_prev_logs,
+        "raw_top_pod_output": raw_top_pod_output,
+        "raw_top_nodes_output": raw_top_nodes_output,
         "errors": errors,
         "warnings": warnings,
         "steps_taken": state.get("steps_taken", []) + ["fetch_resources"],
@@ -432,6 +455,13 @@ async def summarize_node(state: AgentState) -> AgentState:
                  len(state.get("raw_service_data") or []),
                  len(state.get("raw_pvc_data") or []))
 
+    _top_pod = state.get("raw_top_pod_output")
+    _top_nodes = state.get("raw_top_nodes_output")
+    if _top_pod:
+        logger.debug("[SUMMARIZE] including live pod metrics: %s", _top_pod[:80])
+    if _top_nodes:
+        logger.debug("[SUMMARIZE] including live node metrics: %s", _top_nodes[:120])
+
     structured = summarizer.build_context(
         query=query,
         namespace=namespace,
@@ -443,6 +473,8 @@ async def summarize_node(state: AgentState) -> AgentState:
         events_json=state.get("raw_events_json"),
         cluster_reachable=state.get("cluster_reachable", True),
         warnings=state.get("warnings", []),
+        top_pod_output=_top_pod,
+        top_nodes_output=_top_nodes,
     )
 
     logger.info("Summarized context: %d tokens", structured.token_count)

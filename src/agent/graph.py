@@ -123,6 +123,8 @@ class K8sAgentGraph:
             "raw_events_json": None,
             "raw_logs": {},
             "raw_prev_logs": {},
+            "raw_top_pod_output": None,
+            "raw_top_nodes_output": None,
             "structured_context": None,
             "token_count": 0,
             "rag_context": None,

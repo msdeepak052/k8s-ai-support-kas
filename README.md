@@ -23,6 +23,7 @@ Agent: Fetches kubectl describe + logs → summarizes (842 tokens, 95% reduction
 - **Token Efficient**: 95% token reduction via structured summarization
 - **Async Parallel**: Fetches multiple resources simultaneously
 - **Structured Output**: JSON/YAML/table output formats
+- **Debug Mode**: `--debug` flag traces the full internal data-flow to stderr — see exactly what kubectl fetches, what logs arrive, what the LLM receives
 
 ---
 
@@ -110,12 +111,103 @@ kas --interactive
 # JSON output
 kas "deployment not scaling" -n production -o json
 
+# Debug mode — trace every internal step on stderr (see Debug Mode section)
+kas "why is crash-loop-pod crashing?" -n kas-test --debug
+
+# Debug + verbose (also prints execution metadata table at the end)
+kas "why is crash-loop-pod crashing?" -n kas-test --debug --verbose
+
 # Check cluster connectivity and LLM config
 kas check
 
 # Start MCP server (for IDE integration)
 kas mcp
 ```
+
+### CLI Flags Reference
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--namespace` | `-n` | Kubernetes namespace (default: `default`) |
+| `--resource` | `-r` | Specific resource name — skips auto-detection |
+| `--type` | `-t` | Resource type: `pod`, `deployment`, `service`, `node`, `pvc` |
+| `--output` | `-o` | Output format: `table` (default), `json`, `yaml` |
+| `--debug` | `-d` | Enable debug logging — traces internal data-flow to stderr |
+| `--verbose` | `-v` | Show execution metadata table after diagnosis |
+| `--provider` | `-p` | Override LLM provider: `openai`, `gemini`, `claude`, `ollama` |
+| `--model` | `-m` | Override LLM model name |
+| `--interactive` | `-i` | Start interactive REPL mode |
+
+---
+
+## Debug Mode
+
+The `--debug` flag (`-d`) enables full internal tracing on **stderr**, keeping the diagnosis output on **stdout** cleanly separated. Use it when a diagnosis is generic, a fetch is failing silently, or you want to see exactly what the agent is doing.
+
+```bash
+kas "why is crash-loop-pod crashing?" -n kas-test --debug
+```
+
+Sample output (stderr):
+```
+18:21:16 [DEBUG] src.agent.nodes: [ROUTER] query='why is crash-loop-pod crashing?'
+18:21:16 [DEBUG] src.agent.nodes: [ROUTER] cluster_keywords_match=True, cluster_reachable=True
+18:21:16 [DEBUG] src.agent.nodes: [FETCH]  name-like tokens in query: ['crash-loop-pod']
+18:21:16 [DEBUG] src.agent.nodes: [FETCH]  auto-detected resource_name='crash-loop-pod' from query
+18:21:16 [DEBUG] src.agent.nodes: [FETCH]  planned tasks: ['events', 'pods', 'logs', 'prev_logs']
+18:21:17 [DEBUG] src.agent.nodes: [FETCH]  logs               → OK       (159 chars stdout)
+18:21:18 [DEBUG] src.agent.nodes: [FETCH]  log[crash-loop-pod] = 159 chars
+18:21:18 [DEBUG] src.agent.nodes: [SUMMARIZE] pod=crash-loop-pod  log=159 chars  prev_log=159 chars
+18:21:43 [DEBUG] src.tools.rag_tools: [RAG]  chunk: title='CrashLoopBackOff Troubleshooting' relevance=0.750
+18:21:43 [DEBUG] src.agent.nodes: [ANALYZE] mode=cluster+rag, prompt=7420 chars
+18:21:50 [DEBUG] src.agent.nodes: [ANALYZE] JSON parse success=True
+```
+
+### What Each Section Shows
+
+| Section | What It Traces |
+|---------|---------------|
+| `[ROUTER]` | Query analysis, keyword matches, cluster probe result, chosen route |
+| `[FETCH]` | Resource name detection, planned kubectl tasks, per-task OK/FAIL with char counts |
+| `[KUBECTL]` | Exact kubectl command, return code, stdout/stderr sizes |
+| `[KUBECTL-LOGS]` | Pod log fetches — pod name, previous flag, result size |
+| `[SUMMARIZE]` | Per-pod log sizes going into summarizer, token count coming out |
+| `[RAG]` | Retrieval mode (semantic vs keyword fallback), per-chunk relevance scores |
+| `[ANALYZE]` | Prompt mode, prompt size, LLM response size, JSON parse success |
+
+### Filtering Debug Output
+
+```bash
+# Did the right logs get fetched?
+kas "query" -n ns --debug 2>&1 | grep "log\["
+
+# What kubectl commands ran and what did they return?
+kas "query" -n ns --debug 2>&1 | grep -E "\[KUBECTL\]|\[KUBECTL-LOGS\]"
+
+# Was the resource name auto-detected from the query?
+kas "query" -n ns --debug 2>&1 | grep "\[FETCH\]"
+
+# What route did the agent take?
+kas "query" -n ns --debug 2>&1 | grep "\[ROUTER\]"
+
+# Did RAG find relevant docs? What relevance scores?
+kas "query" -n ns --debug 2>&1 | grep "\[RAG\]"
+
+# How big was the prompt sent to the LLM?
+kas "query" -n ns --debug 2>&1 | grep "\[ANALYZE\]"
+
+# Save debug trace to a file for sharing
+kas "query" -n ns --debug 2>/tmp/kas-debug.log
+```
+
+### Debug vs Verbose
+
+| Flag | What It Does |
+|------|-------------|
+| _(neither)_ | Silent — only warnings/errors printed |
+| `--verbose` | Adds execution metadata table (steps, tokens, timing) after diagnosis |
+| `--debug` | Full internal trace on stderr, spinner disabled |
+| `--debug --verbose` | Both: trace on stderr + metadata table after diagnosis |
 
 ---
 
@@ -347,7 +439,7 @@ helm install k8s-ai-support helm/k8s-ai-support/ \
 | `K8S_AI_PROVIDER` | `openai` | LLM provider |
 | `K8S_AI_MODEL` | `gpt-4o-mini` | Model name |
 | `K8S_AI_TOKEN_BUDGET` | `8000` | Max tokens per LLM call |
-| `K8S_AI_LOG_LEVEL` | `INFO` | Log level |
+| `K8S_AI_LOG_LEVEL` | `WARNING` | Base log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`). Normal runs are silent — use `--verbose` for INFO, `--debug` for full trace. |
 | `K8S_AI_KUBECTL_TIMEOUT` | `10` | kubectl timeout (seconds) |
 | `K8S_AI_MCP_RATE_LIMIT` | `10` | MCP requests/minute |
 | `K8S_AI_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
@@ -356,6 +448,18 @@ helm install k8s-ai-support helm/k8s-ai-support/ \
 ---
 
 ## Troubleshooting
+
+**Diagnosis is generic / not using actual logs:**
+```bash
+# Run with --debug to see what kubectl fetched and what the LLM received
+kas "query" -n namespace --debug
+
+# Check whether logs were fetched and how large they are
+kas "query" -n namespace --debug 2>&1 | grep "log\["
+
+# If resource name wasn't auto-detected, pass it explicitly with -r
+kas "query" -n namespace -r my-pod-name --debug
+```
 
 **`kas` command not found after install:**
 ```bash

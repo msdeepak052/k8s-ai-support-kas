@@ -63,19 +63,34 @@ def _setup_logging(verbose: bool, debug: bool = False, log_level: str = "INFO"):
         force=True,   # override any handlers already attached
     )
 
-    # Silence chatty third-party libraries — their logs are noise in debug mode
+    # Third-party libraries that are always silenced — set to CRITICAL so even
+    # their ERROR messages are suppressed (e.g. chromadb telemetry errors, openai
+    # HTTP request dumps, asyncio selector messages).
     _ALWAYS_SILENCE = [
-        "httpx", "httpcore", "urllib3", "PIL", "tqdm", "filelock",
+        # HTTP clients — request/response body logging is noise at every level
+        "httpx", "httpcore", "urllib3",
+        # openai SDK — logs full request bodies & response headers at DEBUG
+        "openai", "openai._base_client",
+        # chromadb — "Starting component X" + telemetry ERROR spam
+        "chromadb", "chromadb.config", "chromadb.api",
+        "chromadb.telemetry", "chromadb.telemetry.product.posthog",
+        "chromadb.segment",
+        # ML / embedding stack
         "sentence_transformers", "torch", "transformers", "huggingface_hub",
+        # misc
+        "PIL", "tqdm", "filelock",
+        # asyncio "Using selector: EpollSelector" at DEBUG
+        "asyncio",
     ]
-    # In non-debug mode also silence framework internals
-    _PROD_SILENCE = ["asyncio", "chromadb", "langchain", "langchain_core", "langgraph"]
-    silence_at = logging.WARNING
+    # In non-debug mode also silence LangChain/LangGraph internal logs
+    _PROD_SILENCE = ["langchain", "langchain_core", "langgraph"]
+
+    # Use CRITICAL so even ERROR-level messages from these libs are suppressed
     for lib in _ALWAYS_SILENCE:
-        logging.getLogger(lib).setLevel(silence_at)
+        logging.getLogger(lib).setLevel(logging.CRITICAL)
     if not debug:
         for lib in _PROD_SILENCE:
-            logging.getLogger(lib).setLevel(silence_at)
+            logging.getLogger(lib).setLevel(logging.WARNING)
 
     if debug:
         logging.getLogger(__name__).debug(
