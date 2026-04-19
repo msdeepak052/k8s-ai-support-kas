@@ -574,6 +574,16 @@ async def analyze_node(state: AgentState) -> AgentState:
     logger.debug("[ANALYZE] total prompt size (system+user): %d chars",
                  len(SYSTEM_PROMPT) + len(user_prompt))
 
+    # Dump full prompts in debug mode so you can verify what the LLM actually sees
+    logger.debug(
+        "[LLM-PROMPT] ════════════ SYSTEM PROMPT (%d chars) ════════════\n%s",
+        len(SYSTEM_PROMPT), SYSTEM_PROMPT,
+    )
+    logger.debug(
+        "[LLM-PROMPT] ════════════ USER PROMPT / CONTEXT (%d chars) ════════════\n%s",
+        len(user_prompt), user_prompt,
+    )
+
     try:
         llm = LLMFactory.create(settings)
 
@@ -586,7 +596,10 @@ async def analyze_node(state: AgentState) -> AgentState:
 
         raw_content = response.content if hasattr(response, "content") else str(response)
         logger.debug("[ANALYZE] LLM response: %d chars", len(raw_content))
-        logger.debug("[ANALYZE] response preview: %s...", raw_content[:200].replace("\n", " "))
+        logger.debug(
+            "[LLM-RESPONSE] ════════════ RAW LLM RESPONSE (%d chars) ════════════\n%s",
+            len(raw_content), raw_content,
+        )
 
         # Parse JSON from response
         diagnosis = _extract_json(raw_content)

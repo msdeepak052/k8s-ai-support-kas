@@ -70,7 +70,12 @@ class KubectlWrapper:
         namespace: Optional[str] = None,
         output_json: bool = True,
         timeout: Optional[int] = None,
+        silent: bool = False,
     ) -> KubectlResult:
+        """
+        Internal async executor for kubectl commands.
+        silent=True: log failures at DEBUG instead of WARNING (for optional/best-effort commands).
+        """
         """
         Internal async executor for kubectl commands.
         Always validates against blocklist before running.
@@ -144,7 +149,8 @@ class KubectlWrapper:
             )
 
             if rc != 0:
-                logger.warning("[KUBECTL] rc=%d | cmd: %s", rc, " ".join(cmd))
+                _log = logger.debug if silent else logger.warning
+                _log("[KUBECTL] rc=%d | cmd: %s", rc, " ".join(cmd))
                 logger.debug("[KUBECTL] stderr: %s", stderr[:300] if stderr else "(empty)")
             else:
                 logger.debug("[KUBECTL] OK rc=0 | stdout=%d chars | cmd: %s",
@@ -232,16 +238,18 @@ class KubectlWrapper:
         return await self._run("top", ["pods"], namespace=namespace, output_json=False)
 
     async def top_pod(self, pod_name: str, namespace: str = "default") -> KubectlResult:
-        """Get current CPU/memory usage for a specific pod."""
+        """Get current CPU/memory usage for a specific pod (best-effort, silent on failure)."""
         logger.debug("[KUBECTL-TOP] pod=%s, ns=%s", pod_name, namespace)
-        result = await self._run("top", ["pods", pod_name], namespace=namespace, output_json=False)
+        result = await self._run(
+            "top", ["pods", pod_name], namespace=namespace, output_json=False, silent=True
+        )
         logger.debug("[KUBECTL-TOP] pod=%s → success=%s  %s",
                      pod_name, result.success, result.stdout.strip()[:80])
         return result
 
     async def top_nodes(self) -> KubectlResult:
-        """Get node resource usage."""
-        return await self._run("top", ["nodes"], namespace=None, output_json=False)
+        """Get node resource usage (best-effort, silent on failure)."""
+        return await self._run("top", ["nodes"], namespace=None, output_json=False, silent=True)
 
     async def get_namespaces(self) -> KubectlResult:
         """List all namespaces."""
