@@ -4,7 +4,8 @@ Optimized for token efficiency and structured JSON output.
 """
 
 import json
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 SYSTEM_PROMPT = """You are an expert Kubernetes SRE. Diagnose the issue from pre-collected cluster data and respond ONLY with valid JSON.
 
@@ -123,72 +124,110 @@ Focus on: phase/status, error conditions, resource constraints, and notable conf
 
 
 def format_diagnosis_as_table(diagnosis: Dict[str, Any]) -> str:
-    """Format LLM diagnosis response as human-readable table output."""
+    """Format LLM diagnosis response as human-readable CLI output."""
+    W = 72  # total line width
+
+    def _wrap(text: str, indent: str = "  ") -> list:
+        """Word-wrap preserving paragraph breaks (newlines in LLM text)."""
+        out = []
+        for para in re.split(r"\n+", text.strip()):
+            para = para.strip()
+            if not para:
+                out.append("")
+                continue
+            words = para.split()
+            line = indent
+            for word in words:
+                candidate = (line + " " + word) if line != indent else (line + word)
+                if len(candidate) > W:
+                    out.append(line.rstrip())
+                    line = indent + word
+                else:
+                    line = candidate
+            if line.strip():
+                out.append(line.rstrip())
+        return out
+
+    HEAVY = "═" * W
+    RULE  = "  " + "─" * (W - 2)
+
     lines = []
-    lines.append("=" * 70)
-    lines.append("  K8S-AI-SUPPORT DIAGNOSIS")
-    lines.append("=" * 70)
+    lines.append(HEAVY)
+    lines.append("  K8S-AI-SUPPORT  DIAGNOSIS")
+    lines.append(HEAVY)
 
-    diag = diagnosis.get("diagnosis", {})
-    severity_colors = {
-        "critical": "CRITICAL",
-        "high": "HIGH",
-        "medium": "MEDIUM",
-        "low": "LOW",
-    }
+    diag       = diagnosis.get("diagnosis", {})
+    severity   = diag.get("severity", "unknown").upper()
+    category   = diag.get("category", "unknown")
+    confidence = f"{diag.get('confidence', 0.0):.0%}"
+    affected   = "  ".join(diag.get("affected_resources", []))
 
-    severity = diag.get("severity", "unknown").lower()
-    severity_label = severity_colors.get(severity, severity.upper())
-
-    lines.append(f"Severity    : [{severity_label}]")
-    lines.append(f"Category    : {diag.get('category', 'unknown')}")
-    lines.append(f"Confidence  : {diag.get('confidence', 0.0):.0%}")
-    lines.append(f"Root Cause  : {diag.get('root_cause', 'Unknown')}")
-
-    affected = diag.get("affected_resources", [])
-    if affected:
-        lines.append(f"Affected    : {', '.join(affected)}")
-
+    lines.append(f"  Severity  : {severity:<16} Category   : {category}")
+    lines.append(f"  Confidence: {confidence:<16} Affected   : {affected or '—'}")
     lines.append("")
-    lines.append("ANALYSIS:")
-    analysis = diagnosis.get("analysis", "")
-    # Word wrap at 68 chars
-    words = analysis.split()
-    line = "  "
-    for word in words:
-        if len(line) + len(word) + 1 > 68:
-            lines.append(line)
-            line = "  " + word
-        else:
-            line += (" " if line != "  " else "") + word
-    if line.strip():
-        lines.append(line)
 
+    # ── Root Cause ──
+    lines.append("  ROOT CAUSE")
+    lines.append(RULE)
+    lines.extend(_wrap(diag.get("root_cause", "Unknown")))
+    lines.append("")
+
+    # ── Analysis ──
+    analysis = diagnosis.get("analysis", "").strip()
+    if analysis:
+        lines.append("  ANALYSIS")
+        lines.append(RULE)
+        lines.extend(_wrap(analysis))
+        lines.append("")
+
+    # ── Suggested Actions ──
     suggestions = diagnosis.get("suggestions", [])
     if suggestions:
-        lines.append("")
-        lines.append("SUGGESTED ACTIONS:")
+        lines.append("  SUGGESTED ACTIONS")
+        lines.append(RULE)
         for i, sugg in enumerate(suggestions, 1):
             priority = sugg.get("priority", "medium").upper()
-            lines.append(f"  [{priority}] {i}. {sugg.get('description', '')}")
-            for cmd in sugg.get("commands", []):
-                lines.append(f"       $ {cmd}")
-            if sugg.get("expected_output"):
-                lines.append(f"       → {sugg.get('expected_output')}")
+            desc     = sugg.get("description", "")
+            cmds     = sugg.get("commands", [])
+            expected = (sugg.get("expected_output") or "").strip()
 
+            # Suggestion header — wrap long descriptions
+            tag    = f"  [{priority}] {i}. "
+            cont   = " " * len(tag)
+            desc_lines = _wrap(desc, indent=cont)
+            if desc_lines:
+                lines.append(tag + desc_lines[0].lstrip())
+                lines.extend(desc_lines[1:])
+            else:
+                lines.append(tag)
+
+            # Commands — always on their own line, clearly marked
+            for cmd in cmds:
+                lines.append(f"       $ {cmd}")
+
+            # Expected output — skip generic/empty values
+            if expected and expected.lower() not in ("n/a", "na", "none", ""):
+                for exp_line in _wrap(expected, indent="       ↳ "):
+                    lines.append(exp_line)
+
+            lines.append("")
+
+    # ── Additional Checks ──
     additional = diagnosis.get("additional_checks", [])
     if additional:
-        lines.append("")
-        lines.append("ADDITIONAL CHECKS:")
+        lines.append("  ADDITIONAL CHECKS")
+        lines.append(RULE)
         for check in additional:
-            lines.append(f"  • {check}")
+            lines.extend(_wrap(f"• {check}", indent="  "))
+        lines.append("")
 
+    # ── ETA ──
     eta = diagnosis.get("estimated_fix_time")
     if eta:
+        lines.append(f"  Estimated Fix Time : {eta}")
         lines.append("")
-        lines.append(f"Estimated resolution: {eta}")
 
-    lines.append("=" * 70)
+    lines.append(HEAVY)
     return "\n".join(lines)
 
 
