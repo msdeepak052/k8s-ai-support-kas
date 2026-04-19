@@ -28,15 +28,21 @@ DATA ALREADY COLLECTED — do NOT suggest commands to re-fetch any of this:
   • live_pod_metrics / live_node_metrics — present as actual values or "unavailable" with reason
   • Deployment, node, service, PVC data as applicable
 
-ANALYSIS field — format as structured sections separated by \n\n (blank lines), NOT a single prose paragraph.
-Use this structure (adapt to the issue type):
+ANALYSIS field — write a concise prose explanation (2-4 sentences) focusing on WHY the issue occurs
+and what the resulting behavior is. Do NOT use newlines or bullet points inside the analysis string.
+Example: "The container 'memory-hog' runs 'stress --vm-bytes 100M' which allocates 100 MB on every start.
+The memory limit is 30Mi, so the OOM killer terminates it instantly before any work completes.
+Kubernetes then restarts the container after exponential backoff, repeating the cycle indefinitely."
 
-"Pod:\n\nName: <name>\nStatus: <phase/state>\n\nContainer:\n\nName: <name>\nLast Termination: <reason> (exit <code>)\nRestart Count: <N>\n\nCommand Executed:\n\n<exact args joined as a single string — e.g. 'stress --vm 1 --vm-bytes 100M --vm-hang 0'>\n\nResource Configuration:\n\nRequests: cpu=<x> memory=<x>\nLimits:   cpu=<x> memory=<x>\n\nLive Metrics:\n\n<live_pod_metrics value or 'unavailable — pod is crashing'>\n\nIssue:\n\n<short bullet-style lines explaining the mismatch>\n\nResulting Behavior:\n\n<what Kubernetes does as a result — step by step>"
-
-Rules for the analysis field:
-  • Always quote the EXACT args string — this directly explains the root cause
-  • Use \n between items in the same section, \n\n between sections
-  • Owner: use owner_references[]; if empty write "Standalone pod (no owner)"
+pod_context field — populate with exact values from the cluster data for structured display:
+  "pod":        "oom-pod  (phase: Running, status: CrashLoopBackOff)"
+  "container":  "memory-hog  (restarts: 47, last_termination: OOMKilled exit 1)"
+  "command":    exact args joined as one string — "stress --vm 1 --vm-bytes 100M --vm-hang 0"
+  "requests":   "cpu=10m  memory=10Mi"  (or "none" if not set)
+  "limits":     "cpu=100m  memory=30Mi" (or "none" if not set)
+  "live_metrics": exact live_pod_metrics value, or "unavailable — pod is crashing"
+  "owner":      from owner_references — "Deployment/oom-deploy" or "Standalone pod (no owner)"
+  If cluster data is not available, omit pod_context entirely (set to null).
 
 SUGGESTIONS: generate 2–4 focused, evidence-based suggestions.
   • For OOM issues: calculate the recommended new memory limit from the actual memory requested in args
@@ -57,6 +63,15 @@ OUTPUT SCHEMA:
     "affected_resources": ["pod/nginx-xxx", "deployment/nginx"],
     "severity": "critical|high|medium|low",
     "category": "crashloop|imagepull|oom|pending|network|storage|node|config|other"
+  },
+  "pod_context": {
+    "pod": "oom-pod  (phase: Running, status: CrashLoopBackOff)",
+    "container": "memory-hog  (restarts: 47, last_termination: OOMKilled exit 1)",
+    "command": "stress --vm 1 --vm-bytes 100M --vm-hang 0",
+    "requests": "cpu=10m  memory=10Mi",
+    "limits": "cpu=100m  memory=30Mi",
+    "live_metrics": "unavailable — pod is crashing",
+    "owner": "Standalone pod (no owner)"
   },
   "analysis": "detailed technical explanation of what is happening and why",
   "suggestions": [
@@ -186,12 +201,31 @@ def format_diagnosis_as_table(diagnosis: Dict[str, Any]) -> str:
     lines.extend(_wrap(diag.get("root_cause", "Unknown")))
     lines.append("")
 
-    # ── Analysis ──
-    analysis = diagnosis.get("analysis", "").strip()
-    if analysis:
+    # ── Analysis (pod_context + prose) ──
+    pod_ctx   = diagnosis.get("pod_context") or {}
+    analysis  = diagnosis.get("analysis", "").strip()
+    if pod_ctx or analysis:
         lines.append("  ANALYSIS")
         lines.append(RULE)
-        lines.extend(_wrap(analysis))
+
+        if pod_ctx:
+            _LABELS = {
+                "pod":          "Pod         ",
+                "container":    "Container   ",
+                "command":      "Command     ",
+                "requests":     "Requests    ",
+                "limits":       "Limits      ",
+                "live_metrics": "Live Metrics",
+                "owner":        "Owner       ",
+            }
+            for key, label in _LABELS.items():
+                val = pod_ctx.get(key)
+                if val:
+                    lines.extend(_wrap(f"{label}: {val}", indent="  "))
+            lines.append("")
+
+        if analysis:
+            lines.extend(_wrap(analysis))
         lines.append("")
 
     # ── Suggested Actions ──
