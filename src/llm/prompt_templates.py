@@ -24,39 +24,45 @@ BANNED SUGGESTION COMMANDS — data is already provided, never suggest these:
   kubectl get events                         ← events are in the context
   kubectl top pod / kubectl top nodes        ← metrics are in the context (or marked unavailable)
 
-ANALYSIS REQUIREMENTS — your "analysis" field MUST explicitly state:
-  • resource_requests AND resource_limits with exact values from the pod spec
-    (e.g., "requests: cpu=100m memory=64Mi | limits: cpu=500m memory=30Mi")
-  • live_pod_metrics value — if "unavailable", say so and note metrics-server is not installed
-  • the actual error or exit code from container statuses / previous logs
+ANALYSIS REQUIREMENTS — your "analysis" field MUST:
+  • Quote exact resource_requests AND resource_limits from the pod spec
+    (e.g., "requests: cpu=100m memory=64Mi | limits: memory=30Mi")
+  • Quote the actual error/reason/exit-code from container statuses or previous logs
+  • If live_pod_metrics shows real values — state them explicitly
+  • If live_pod_metrics is "unavailable (pod is crashing...)" — note that metrics aren't available
+    because the pod is in a crash loop, NOT because metrics-server is missing
+  • If live_pod_metrics is "unavailable (metrics-server not installed...)" — note this and it will
+    be covered in suggestions
 
-SUGGESTION REQUIREMENTS — always output 3–5 suggestions:
-  [HIGH]   1. State the SPECIFIC FIX with exact values from the context
-              (e.g., "Memory limit is 30Mi — increase resources.limits.memory to at least 256Mi")
-  [HIGH]   2. Find the resource to edit
-              (e.g., kubectl get pod <name> -n <ns> -o jsonpath='{.metadata.ownerReferences[*].name}')
-  [MEDIUM] 3. If live_pod_metrics is "unavailable", suggest enabling metrics-server:
-              kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-              Then verify: kubectl top pod <name> -n <ns>  (label as: "after enabling metrics-server")
-  [MEDIUM] 4. Fetch data genuinely NOT in the context (ConfigMaps, Secrets, NetworkPolicies if referenced)
-  [LOW]    5. Post-fix verification — clearly label as "run AFTER applying the fix"
+SUGGESTION REQUIREMENTS — always output 3–5 distinct, actionable suggestions:
+  [HIGH]   1. THE FIX: State the exact change needed with values from the spec.
+              Combine finding the owner and getting the resource spec into one suggestion.
+              e.g., commands: ["kubectl get pod <name> -n <ns> -o jsonpath='{.metadata.ownerReferences[*].name}'"]
+              description: "Increase memory limit from 30Mi to 128Mi — find the owning Deployment/StatefulSet above, then update resources.limits.memory in its manifest"
+  [HIGH]   2. Fetch data that is GENUINELY MISSING from the context and needed to confirm or fix the issue
+              (ConfigMaps, Secrets, NetworkPolicies, Endpoints — only if referenced but not provided)
+  [MEDIUM] 3. ONLY if live_pod_metrics contains "metrics-server not installed": suggest installing it.
+              SKIP this suggestion entirely if the pod is simply crashing (metrics-server IS installed).
+  [LOW]    4. Post-fix verification step — explicitly label as "after applying the fix"
 
-Category-specific FIX guidance (reference actual values from context):
-  oom:       → Exact current limit from spec; recommend value (min 2x limit, or based on live usage)
+Category-specific FIX guidance (use actual values from context, not generic placeholders):
+  oom:       → State exact limit (e.g., "30Mi"); recommend new value (2–4x limit minimum)
              → Find owner: kubectl get pod <name> -n <ns> -o jsonpath='{.metadata.ownerReferences[*].name}'
-             → If metrics unavailable: suggest installing metrics-server to confirm actual usage
-  crashloop: → Quote actual crash error text from previous logs
+             → Do NOT suggest "check for memory leaks" unless log evidence shows a leak pattern
+             → Post-fix: kubectl top pod <name> -n <ns>  (label: AFTER increasing limit)
+  crashloop: → Quote actual crash error from previous logs verbatim
              → Missing config: kubectl get configmap <cm> -n <ns> / kubectl get secret <s> -n <ns>
-  imagepull: → Quote exact failing image; suggest corrected name if obvious from error
-             → Check pull secrets: kubectl get secret -n <ns>
+             → Broken probe: state exact probe config from pod spec
+  imagepull: → Quote exact failing image string; suggest corrected name if error makes it obvious
+             → kubectl get secret -n <ns>  (to check ImagePullSecrets)
   pending:   → Quote exact scheduler failure message from events
-             → If node data not in context: kubectl describe node <node-name>
-             → If PVC data not in context: kubectl describe pvc <name> -n <ns>
+             → kubectl describe node <node-name> if node data not in context
+             → kubectl describe pvc <name> -n <ns> if PVC data not in context
   network:   → kubectl get endpoints <svc-name> -n <ns>
              → kubectl get networkpolicies -n <ns>
   storage:   → kubectl get pv / kubectl get storageclass (if not already in context)
   config:    → kubectl get configmap <name> -n <ns> / kubectl get secret <name> -n <ns>
-  node:      → kubectl describe node <node-name> (if node detail not already in context)
+  node:      → kubectl describe node <node-name> (only if node detail not already in context)
 
 CORE RULES:
 1. Output ONLY valid JSON matching the schema — no markdown, no preamble

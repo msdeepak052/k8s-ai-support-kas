@@ -407,6 +407,18 @@ async def fetch_resources_node(state: AgentState) -> AgentState:
     if events_result and not isinstance(events_result, Exception) and events_result.success:
         raw_events_json = events_result.parsed
 
+    # Refine top_pod unavailability: distinguish "pod crashing (no metrics)" vs "metrics-server missing".
+    # If top_nodes succeeded, metrics-server IS installed — top_pod just has no data because the pod
+    # is crashing and hasn't had stable runtime to accumulate metrics.
+    _metrics_server_up = raw_top_nodes_output not in (None, "unavailable")
+    if raw_top_pod_output == "unavailable":
+        raw_top_pod_output = "pod_crashing_no_metrics" if _metrics_server_up else "no_metrics_server"
+    if raw_top_nodes_output == "unavailable":
+        raw_top_nodes_output = "no_metrics_server"
+
+    logger.debug("[FETCH] metrics_server_up=%s, top_pod_status=%s",
+                 _metrics_server_up, raw_top_pod_output)
+
     # --- Summary of what was collected ---
     logger.debug("[FETCH] raw_logs keys: %s", list(raw_logs.keys()))
     for _pod, _txt in raw_logs.items():

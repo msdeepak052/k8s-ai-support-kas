@@ -444,8 +444,11 @@ class ResourceSummarizer:
         # Becomes: "cpu=1m  memory=45Mi"
         # When the command was attempted but failed: "unavailable (metrics-server not installed)"
         if top_pod_output:
-            if top_pod_output.strip().lower() == "unavailable":
-                ctx.live_pod_metrics = "unavailable (metrics-server not installed — cannot show live usage)"
+            _sentinel = top_pod_output.strip()
+            if _sentinel == "pod_crashing_no_metrics":
+                ctx.live_pod_metrics = "unavailable (pod is crashing — metrics are only collected for running pods)"
+            elif _sentinel == "no_metrics_server":
+                ctx.live_pod_metrics = "unavailable (metrics-server not installed in this cluster)"
             else:
                 lines = [l for l in top_pod_output.strip().splitlines() if l.strip()]
                 if len(lines) >= 2:
@@ -460,7 +463,7 @@ class ResourceSummarizer:
 
         # Include full top-nodes output (compact table, useful for node-pressure context)
         if top_nodes_output:
-            if top_nodes_output.strip().lower() == "unavailable":
+            if top_nodes_output.strip() == "no_metrics_server":
                 ctx.live_node_metrics = "unavailable (metrics-server not installed)"
             else:
                 ctx.live_node_metrics = top_nodes_output.strip()[:400]
