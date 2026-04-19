@@ -28,14 +28,15 @@ DATA ALREADY COLLECTED — do NOT suggest commands to re-fetch any of this:
   • live_pod_metrics / live_node_metrics — present as actual values or "unavailable" with reason
   • Deployment, node, service, PVC data as applicable
 
-ANALYSIS must state ALL of the following (use exact values from the data, never paraphrase):
-  • Resource requests and limits: quote both (e.g., "requests: cpu=10m memory=10Mi | limits: cpu=100m memory=30Mi")
-  • Container command and args: quote the EXACT args array as a single readable string
-    e.g., if args=["--vm","1","--vm-bytes","100M","--vm-hang","0"] → write: "stress --vm 1 --vm-bytes 100M --vm-hang 0"
-    This is critical — it directly explains WHY the limit is exceeded
-  • The actual error, exit code, last_termination_reason from container_statuses
-  • Owner reference — name the actual owner from owner_references; if empty, state "standalone pod (no owner)"
-  • live_pod_metrics: actual value or explain why unavailable
+ANALYSIS field — format as structured sections separated by \n\n (blank lines), NOT a single prose paragraph.
+Use this structure (adapt to the issue type):
+
+"Pod:\n\nName: <name>\nStatus: <phase/state>\n\nContainer:\n\nName: <name>\nLast Termination: <reason> (exit <code>)\nRestart Count: <N>\n\nCommand Executed:\n\n<exact args joined as a single string — e.g. 'stress --vm 1 --vm-bytes 100M --vm-hang 0'>\n\nResource Configuration:\n\nRequests: cpu=<x> memory=<x>\nLimits:   cpu=<x> memory=<x>\n\nLive Metrics:\n\n<live_pod_metrics value or 'unavailable — pod is crashing'>\n\nIssue:\n\n<short bullet-style lines explaining the mismatch>\n\nResulting Behavior:\n\n<what Kubernetes does as a result — step by step>"
+
+Rules for the analysis field:
+  • Always quote the EXACT args string — this directly explains the root cause
+  • Use \n between items in the same section, \n\n between sections
+  • Owner: use owner_references[]; if empty write "Standalone pod (no owner)"
 
 SUGGESTIONS: generate 2–4 focused, evidence-based suggestions.
   • For OOM issues: calculate the recommended new memory limit from the actual memory requested in args
@@ -133,24 +134,32 @@ def format_diagnosis_as_table(diagnosis: Dict[str, Any]) -> str:
     W = 72  # total line width
 
     def _wrap(text: str, indent: str = "  ") -> list:
-        """Word-wrap preserving paragraph breaks (newlines in LLM text)."""
+        """Render text preserving structure:
+          - \\n\\n between sections → blank line in output
+          - \\n within a section   → new indented line (word-wrapped if long)
+        """
         out = []
-        for para in re.split(r"\n+", text.strip()):
-            para = para.strip()
-            if not para:
-                out.append("")
-                continue
-            words = para.split()
-            line = indent
-            for word in words:
-                candidate = (line + " " + word) if line != indent else (line + word)
-                if len(candidate) > W:
-                    out.append(line.rstrip())
-                    line = indent + word
-                else:
-                    line = candidate
-            if line.strip():
-                out.append(line.rstrip())
+        sections = text.strip().split("\n\n")
+        for si, section in enumerate(sections):
+            if si > 0:
+                out.append("")          # blank line between sections
+            for line in section.split("\n"):
+                line = line.strip()
+                if not line:
+                    out.append("")
+                    continue
+                # Word-wrap long lines
+                words = line.split()
+                cur = indent
+                for word in words:
+                    candidate = (indent + word) if cur == indent else (cur + " " + word)
+                    if len(candidate) > W:
+                        out.append(cur.rstrip())
+                        cur = indent + word
+                    else:
+                        cur = candidate
+                if cur.strip():
+                    out.append(cur.rstrip())
         return out
 
     HEAVY = "═" * W
